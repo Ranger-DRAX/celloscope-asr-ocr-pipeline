@@ -27,3 +27,7 @@ htmlcov/
 # OS
 .DS_Store
 Thumbs.db
+
+# testdata audio files
+testdata/
+!testdata/mock_responses/

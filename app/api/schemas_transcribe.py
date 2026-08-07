@@ -1,10 +1,9 @@
 from pydantic import BaseModel
-from typing import Literal
 
 
 class TranscribeResponse(BaseModel):
     transcript: str
-    detected_language: Literal["bn", "en"] | None
+    detected_language: str | None
     duration_seconds: float
     provider: str
     has_speech: bool

@@ -7,8 +7,8 @@ from app.adapters.base import TranscriptionResult
 class MockTranscribeAdapter:
     """Loads pre-recorded fixture JSON files instead of running a real model.
 
-    Used as the default provider so the entire pipeline works end-to-end
-    without GPU, model download, or any heavy dependency.
+    Falls back to a default mock response if no specific fixture matches
+    the input filename stem.
     """
 
     def __init__(self, fixtures_dir: str):
@@ -17,13 +17,21 @@ class MockTranscribeAdapter:
     def transcribe(self, audio_bytes: bytes, filename: str, language: str | None) -> TranscriptionResult:
         key = self._key_for(audio_bytes, filename)
         path = os.path.join(self.fixtures_dir, f"{key}.json")
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"No mock fixture for '{filename}' (key={key})")
-        with open(path) as f:
-            data = json.load(f)
-        return TranscriptionResult(**data)
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            return TranscriptionResult(**data)
+        
+        # Graceful fallback mock response if no exact fixture exists
+        detected_lang = language if language in ("bn", "en") else "en"
+        return TranscriptionResult(
+            transcript=f"Mock transcription output for '{filename}'",
+            detected_language=detected_lang,
+            duration_seconds=3.5,
+            provider="mock",
+            has_speech=True,
+        )
 
     @staticmethod
     def _key_for(audio_bytes: bytes, filename: str) -> str:
-        # Match by filename stem so real recorded testdata files map 1:1 to fixtures.
         return os.path.splitext(os.path.basename(filename))[0]

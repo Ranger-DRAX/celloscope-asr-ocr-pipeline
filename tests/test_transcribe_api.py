@@ -5,13 +5,17 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.api import routes_transcribe
+from app.config import settings
 
 
 @pytest.fixture(autouse=True)
-def _reset_adapter():
-    """Reset the singleton adapter before each test to ensure test isolation."""
+def _setup_mock_provider():
+    """Ensure mock provider is used for API integration tests."""
+    original_provider = settings.transcribe_provider
+    settings.transcribe_provider = "mock"
     routes_transcribe._adapter_instance = None
     yield
+    settings.transcribe_provider = original_provider
     routes_transcribe._adapter_instance = None
 
 

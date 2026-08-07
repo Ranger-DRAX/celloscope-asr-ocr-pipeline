@@ -4,13 +4,13 @@ from typing import Literal
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env")
+    model_config = ConfigDict(env_file=".env", extra="ignore")
 
-    transcribe_provider: Literal["mock", "faster_whisper"] = "mock"
+    transcribe_provider: Literal["mock", "faster_whisper"] = "faster_whisper"
 
     whisper_model: str = "small"
-    whisper_device: Literal["cuda", "cpu"] = "cpu"          # CPU-safe default for graders
-    whisper_compute_type: str = "int8"                       # int8 on CPU, float16 on cuda
+    whisper_device: Literal["cuda", "cpu"] = "cuda"          # Default to CUDA (GPU)
+    whisper_compute_type: str = "default"                    # 'default' safely selects float32/int8 per GPU
 
     max_upload_mb: int = 25
     allowed_audio_formats: tuple[str, ...] = (".wav", ".mp3", ".m4a", ".flac", ".ogg")

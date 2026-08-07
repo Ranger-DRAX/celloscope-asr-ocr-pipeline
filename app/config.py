@@ -1,14 +1,14 @@
-from pydantic_settings import BaseSettings
-from pydantic import ConfigDict
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Literal
 
 
 class Settings(BaseSettings):
-    model_config = ConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     transcribe_provider: Literal["mock", "faster_whisper"] = "faster_whisper"
 
     whisper_model: str = "small"
+    whisper_model_bn: str | None = None
     whisper_device: Literal["cuda", "cpu"] = "cuda"          # Default to CUDA (GPU)
     whisper_compute_type: str = "default"                    # 'default' safely selects float32/int8 per GPU
 

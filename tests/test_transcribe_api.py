@@ -1,5 +1,8 @@
 """Integration tests for POST /api/v1/transcribe — mock provider via TestClient."""
 
+import os
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -7,6 +10,9 @@ from app.main import app
 from app.api import routes_transcribe
 from app.config import settings
 
+
+ROOT = Path(__file__).resolve().parents[1]
+BN_FIXTURE_DIR = ROOT / "testdata" / "audio_BN"
 
 @pytest.fixture(autouse=True)
 def _setup_mock_provider():
@@ -96,3 +102,30 @@ class TestTranscribeAPI:
         assert response.status_code == 400
         body = response.json()
         assert body["detail"]["error"] == "invalid_language"
+
+    def test_bengali_fixture_transcribes_expected_text(self):
+        """A real Bengali fixture should transcribe to its paired .txt content."""
+        if not os.environ.get("WHISPER_MODEL_BN"):
+            pytest.skip("WHISPER_MODEL_BN is required for the Bengali fixture regression test")
+
+        audio_path = BN_FIXTURE_DIR / "sample_2047.mp3"
+        expected_text = (BN_FIXTURE_DIR / "sample_2047.txt").read_text(encoding="utf-8").strip()
+
+        routes_transcribe._adapter_instance = None
+        original_provider = settings.transcribe_provider
+        original_bn_model = settings.whisper_model_bn
+        settings.transcribe_provider = "faster_whisper"
+        settings.whisper_model_bn = os.environ.get("WHISPER_MODEL_BN")
+
+        try:
+            adapter = routes_transcribe.get_adapter()
+        finally:
+            settings.transcribe_provider = original_provider
+            settings.whisper_model_bn = original_bn_model
+
+        audio_bytes = audio_path.read_bytes()
+        result = adapter.transcribe(audio_bytes, audio_path.name, language="bn")
+
+        assert result.has_speech is True
+        assert result.detected_language == "bn"
+        assert result.transcript.strip() == expected_text

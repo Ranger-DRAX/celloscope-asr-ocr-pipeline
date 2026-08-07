@@ -30,32 +30,55 @@ from app.services.transcribe_service import UnsupportedFormatError
 class FasterWhisperAdapter:
     """Production adapter — uses faster-whisper on CUDA (GPU) or CPU.
 
-    The model is loaded once in __init__ and reused for all requests.
+    The primary model is loaded once in __init__ and reused for all requests.
+
+    Bengali note: generic multilingual Whisper checkpoints are meaningfully
+    weaker on Bengali than English (low-resource language in training data).
+    Two mitigations are applied:
+      1. Decoding params tuned for weaker languages (see transcribe() below) —
+         condition_on_previous_text=False prevents one bad segment from
+         poisoning the rest of the transcript; beam_size=5 gives the decoder
+         more chance to recover from an early wrong token.
+      2. Optional second model for Bengali specifically, activated by setting
+         WHISPER_MODEL_BN to a local CT2-converted, Bengali-finetuned
+         checkpoint path (e.g. a converted version of
+         bangla-speech-processing/whisper_small_bn). If unset, all languages
+         use the primary model.
     """
 
     def __init__(self):
         device = settings.whisper_device
         compute_type = settings.whisper_compute_type
-        logger.info(f"Initializing FasterWhisperAdapter (device={device}, compute_type={compute_type}, model={settings.whisper_model})")
+        logger.info(
+            f"Initializing FasterWhisperAdapter (device={device}, "
+            f"compute_type={compute_type}, model={settings.whisper_model})"
+        )
 
+        self._model, self._device = self._load_model(settings.whisper_model, device, compute_type)
+
+        # Optional Bengali-specific model. Only loaded if configured — keeps
+        # the mock/default path untouched and avoids doubling VRAM usage
+        # unless the user has explicitly opted in.
+        self._bn_model = None
+        bn_model_path = getattr(settings, "whisper_model_bn", None)
+        if bn_model_path:
+            logger.info(f"Loading dedicated Bengali model from {bn_model_path}")
+            self._bn_model, _ = self._load_model(bn_model_path, device, compute_type)
+        self._bn_prompt = (
+            "This audio is spoken Bengali. Transcribe it in Bengali script only, "
+            "preserving the spoken words as closely as possible."
+        )
+
+    def _load_model(self, model_name: str, device: str, compute_type: str):
         try:
-            self._model = WhisperModel(
-                settings.whisper_model,
-                device=device,
-                compute_type=compute_type,
-            )
-            self._device = device
+            model = WhisperModel(model_name, device=device, compute_type=compute_type)
+            return model, device
         except Exception as e:
             if device == "cuda":
-                logger.warning(f"Failed to initialize WhisperModel on CUDA ({e}). Falling back to CPU.")
-                self._model = WhisperModel(
-                    settings.whisper_model,
-                    device="cpu",
-                    compute_type="int8",
-                )
-                self._device = "cpu"
-            else:
-                raise e
+                logger.warning(f"Failed to initialize '{model_name}' on CUDA ({e}). Falling back to CPU.")
+                model = WhisperModel(model_name, device="cpu", compute_type="int8")
+                return model, "cpu"
+            raise e
 
     def transcribe(self, audio_bytes: bytes, filename: str, language: str | None) -> TranscriptionResult:
         suffix = os.path.splitext(filename)[1] or ".wav"
@@ -64,12 +87,21 @@ class FasterWhisperAdapter:
             tmp.flush()
             tmp_path = tmp.name
 
+        # Route to the Bengali-specific model only when the caller explicitly
+        # asked for 'bn' and a dedicated model is configured. In 'auto' mode
+        # we always use the primary model first, since we don't know the
+        # language yet — see note below on re-running detection for 'auto'.
+        active_model = self._bn_model if (language == "bn" and self._bn_model is not None) else self._model
+        transcript_model = active_model
+
         try:
-            segments, info = self._model.transcribe(
+            segments, info = active_model.transcribe(
                 tmp_path,
-                language=language,          # None => auto-detect
-                task="transcribe",          # NEVER "translate" — keep spoken language as-is
-                vad_filter=True,            # trims leading/trailing silence
+                language=language,                  # None => auto-detect
+                task="transcribe",                   # NEVER "translate" — keep spoken language as-is
+                vad_filter=True,                      # trims leading/trailing silence
+                condition_on_previous_text=False,    # stop one bad segment poisoning the rest — key fix for Bengali
+                beam_size=5,                          # beam search recovers better than greedy on weaker languages
             )
             segments = list(segments)
         except Exception as e:
@@ -84,15 +116,39 @@ class FasterWhisperAdapter:
         duration = info.duration
         detected = info.language  # 'bn' / 'en' / etc.
 
+        # If 'auto' detected Bengali but we ran on the primary (non-Bengali-
+        # tuned) model, and a dedicated bn model is configured, re-run once
+        # on that model for better quality. Small latency cost, only on the
+        # auto+Bengali path.
+        if language is None and detected == "bn" and self._bn_model is not None and active_model is not self._bn_model:
+            transcript_model = self._bn_model
+            segments, info = transcript_model.transcribe(
+                tmp_path,
+                language="bn",
+                task="transcribe",
+                vad_filter=True,
+                condition_on_previous_text=False,
+                beam_size=5,
+                initial_prompt=self._bn_prompt,
+            )
+            segments = list(segments)
+            duration = info.duration
+            detected = info.language
+
         has_speech, text = self._resolve_speech(segments)
 
+        model_label = settings.whisper_model_bn if transcript_model is self._bn_model else settings.whisper_model
+        detected_language = detected if detected in ("bn", "en") else None
         return TranscriptionResult(
             transcript=text,
-            detected_language=detected if has_speech else None,
+            detected_language=detected_language if has_speech else None,
             duration_seconds=round(duration, 2),
-            provider=f"faster-whisper-{settings.whisper_model} ({self._device})",
+            provider=f"faster-whisper-{model_label} ({self._device})",
             has_speech=has_speech,
         )
+        
+        
+        
 
     @staticmethod
     def _resolve_speech(segments) -> tuple[bool, str]:

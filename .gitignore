@@ -31,3 +31,7 @@ Thumbs.db
 # testdata audio files
 testdata/
 !testdata/mock_responses/
+
+# Model weights (large binaries — download or convert locally)
+models/
+pretrained_models/

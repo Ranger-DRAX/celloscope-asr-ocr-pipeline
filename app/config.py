@@ -18,6 +18,15 @@ class Settings(BaseSettings):
     no_speech_prob_threshold: float = 0.6
     avg_logprob_threshold: float = -1.0
 
+    # Language-ID (LID) router settings.
+    # lid_model: HuggingFace repo or local path for the SpeechBrain LID model.
+    # lid_bn_threshold: minimum LID confidence to route to the Bengali model.
+    #   Below this score the general Whisper model is used instead.
+    # lid_savedir: directory where SpeechBrain caches the downloaded model.
+    lid_model: str = "speechbrain/lang-id-voxlingua107-ecapa"
+    lid_bn_threshold: float = 0.7
+    lid_savedir: str = "pretrained_models"
+
     mock_responses_dir: str = "testdata/mock_responses"
 
 

@@ -6,3 +6,6 @@ python-multipart>=0.0.9
 faster-whisper>=1.1.0
 httpx>=0.27.0
 pytest>=8.0.0
+# LID (Language-ID) front-end — SpeechBrain ECAPA-TDNN
+speechbrain>=1.0.0
+torch>=2.0.0

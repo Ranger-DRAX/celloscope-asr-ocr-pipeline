@@ -111,78 +111,37 @@ def validate_document(filename: str, size_bytes: int, max_mb: int) -> None:
         )
 
 
-def maybe_rasterize_pdf(image_bytes: bytes, filename: str) -> tuple[bytes, str]:
-    """If the file is a PDF, rasterize page 1 to PNG bytes.
-
-    Uses pdf2image (lazily imported). Only page 1 is processed —
-    multi-page PDFs are a known limitation documented in README.md.
-
-    Returns:
-        (image_bytes, effective_filename) — PNG bytes + updated filename.
-
-    Raises:
-        DocumentCorruptError: if pdf2image cannot open the PDF.
-    """
-    ext = filename.lower().rsplit(".", 1)[-1]
-    if ext != "pdf":
-        return image_bytes, filename
-
-    try:
-        from pdf2image import convert_from_bytes  # type: ignore
-    except ImportError as e:
-        raise ImportError(
-            "pdf2image is not installed. Run: pip install pdf2image"
-        ) from e
-
-    try:
-        import io
-        pages = convert_from_bytes(image_bytes, first_page=1, last_page=1, dpi=200)
-        if not pages:
-            raise DocumentCorruptError(f"PDF '{filename}' produced no pages.")
-        buf = io.BytesIO()
-        pages[0].save(buf, format="PNG")
-        png_bytes = buf.getvalue()
-        logger.info(
-            f"PDF '{filename}' rasterized to PNG "
-            f"({len(image_bytes)} → {len(png_bytes)} bytes, page 1 only)"
-        )
-        new_filename = filename.rsplit(".", 1)[0] + ".png"
-        return png_bytes, new_filename
-    except Exception as exc:
-        raise DocumentCorruptError(
-            f"PDF '{filename}' could not be rasterized: {exc}"
-        ) from exc
 
 
 # ── Adapter singleton ─────────────────────────────────────────────────────────
 
-_paddle_adapter: Optional[DocumentOCRPort] = None
+_mistral_adapter: Optional[DocumentOCRPort] = None
 
 
 def get_ocr_adapter() -> DocumentOCRPort:
-    """Return the configured OCR adapter (lazy singleton for PaddleOCR).
+    """Return the configured OCR adapter (lazy singleton for MistralOCR).
 
-    Provider is read from settings.document_ocr_provider at call time.
+    Provider is read from settings.document_extraction_provider at call time.
     """
-    global _paddle_adapter
+    global _mistral_adapter
     from app.config import settings
 
-    if settings.document_ocr_provider == "mock":
+    if settings.document_extraction_provider == "mock":
         from app.adapters.ocr.mock_document_adapter import MockDocumentAdapter
         return MockDocumentAdapter(fixtures_dir=settings.document_fixtures_dir)
 
-    # Real PaddleOCR — load once and cache
-    if _paddle_adapter is None:
-        from app.adapters.ocr.paddle_ocr_adapter import PaddleOCRAdapter
-        logger.info("Lazy-loading PaddleOCRAdapter (CPU)")
-        _paddle_adapter = PaddleOCRAdapter(use_gpu=False)
-    return _paddle_adapter
+    # Real MistralOCR — load once and cache
+    if _mistral_adapter is None:
+        from app.adapters.ocr.mistral_ocr_adapter import MistralOCRAdapter
+        logger.info("Lazy-loading MistralOCRAdapter")
+        _mistral_adapter = MistralOCRAdapter(api_key=settings.mistral_api_key)
+    return _mistral_adapter
 
 
 def _reset_adapter_singleton() -> None:
-    """Reset the PaddleOCR singleton — used in tests."""
-    global _paddle_adapter
-    _paddle_adapter = None
+    """Reset the Mistral singleton — used in tests."""
+    global _mistral_adapter
+    _mistral_adapter = None
 
 
 # ── Main orchestration ────────────────────────────────────────────────────────
@@ -208,8 +167,7 @@ def run_extraction(
     """
     from app.config import settings
 
-    # Step 1: Rasterize PDF if necessary
-    image_bytes, filename = maybe_rasterize_pdf(image_bytes, filename)
+    # Step 1: Mistral handles PDFs and Images, so no rasterization is needed.
 
     # Step 2: OCR
     adapter = get_ocr_adapter()

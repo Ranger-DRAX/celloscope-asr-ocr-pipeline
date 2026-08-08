@@ -23,6 +23,7 @@ venv/
 .pytest_cache/
 .coverage
 htmlcov/
+pytest.ini
 
 # OS
 .DS_Store
@@ -38,3 +39,5 @@ pretrained_models/
 
 #agent
 agent.md
+
+s

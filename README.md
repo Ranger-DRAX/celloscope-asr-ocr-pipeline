@@ -142,13 +142,22 @@ Tests cover (37 tests, ~1 s with mock provider):
 | `file`     | UploadFile | Yes      | —        | `.jpg`, `.jpeg`, `.png`, `.webp`, `.pdf`    |
 
 **Notes:**
-- **PDF Limitation**: Multi-page PDFs are accepted, but only the **first page** is rasterized and processed. This is a known limitation.
+- **Provider (Mistral OCR)**: This endpoint uses the Mistral SDK (`mistralai`) and relies on `mistral-ocr-latest` to parse documents. The endpoint uses the `raw_line` from Mistral markdown table parsing.
 - **Graceful Degradation**: If the uploaded image does not resemble a lab report (e.g., an invoice or nature photo), the endpoint returns an HTTP 422 error (`not_a_lab_report`).
 - **Data Fidelity (`raw_line`)**: The `raw_line` field is SACRED. It always contains the verbatim text detected by OCR for that row, preserving any abbreviations, unparseable ranges, or typos for human review.
-- **Canonical Normalization**:
-  - `value`: Numeric thresholds like `<0.5` are parsed as `0.5`. Qualitative results (Positive, Nil) yield `value: null`. Unparseable ranges (e.g., `0.8 - 1.2`) are rejected from `value` entirely.
-  - `unit`: Extensively normalized (e.g., `gm/dl` → `g/dL`, `10^3/ul` → `10³/µL`).
-  - `report_date`: Converted to ISO-8601 (`YYYY-MM-DD`). Note: `DD/MM/YYYY` is assumed over `MM/DD/YYYY` when ambiguous.
+
+#### Document Extraction Normalization Rules:
+- **Numeric values**: Standalone numbers (e.g., `12.5`, `12,500`) are converted to `float` (`12.5`, `12500.0`).
+- **Scientific notation**: Parsed correctly when possible (e.g., `1.2 x 10^3` to `1200`).
+- **Comparison values**: A value like `<0.5` remains parsed as `0.5`, with qualitative results (Positive, Nil) yielding `value: null`. Unparseable ranges (e.g., `0.8 - 1.2`) are rejected from `value` entirely.
+- **Units**: Extensively normalized (e.g., `gm/dl` → `g/dL`, `10^3/ul` → `10³/µL`).
+- **Reference ranges**: Normalized to a standard format (e.g., `70-110` → `70 - 110`).
+- **Dates**: Converted to ISO-8601 (`YYYY-MM-DD`). Note: `DD/MM/YYYY` is assumed over `MM/DD/YYYY` when ambiguous.
+
+#### Limitations
+- **Severely Degraded Documents**: Documents that are extremely cropped, have unreadable text, or severe blur may yield partial or no results. The endpoint does not hallucinate data.
+- **Ambiguous Dates**: If a date is highly ambiguous (e.g., `03/04/2026`) and context doesn't clarify it, the original string might be preserved or normalization might skip depending on confidence.
+- **Missing Values**: Results without numeric values (or identifiable ranges) might be dropped or logged as partial extraction without `value`.
 
 #### Sample Success Response — `POST /api/v1/documents/extract` (HTTP 200)
 
@@ -271,6 +280,8 @@ All settings can be overridden via environment variables or `.env`:
 | `ENABLE_REMOTE_LANGUAGE_DETECTION`   | `true`                                               | Set to `false` to always use local auto-detect                     |
 | `LANGUAGE_DETECTION_TIMEOUT_SECONDS` | `8.0`                                                | Hard timeout for Groq call — local fallback triggers on expiry    |
 | `LANGUAGE_DETECTION_SAMPLE_SECONDS`  | `12.0`                                               | Audio sample duration sent to Groq (only this leaves the machine) |
+| `DOCUMENT_EXTRACTION_PROVIDER`       | `mock`                                               | `mock` or `mistral_ocr`.                                          |
+| `MISTRAL_API_KEY`                    | `None`                                               | Required if `DOCUMENT_EXTRACTION_PROVIDER` is `mistral_ocr`       |
 | `LOG_LEVEL`                          | `INFO`                                               | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`         |
 
 ---

@@ -4,7 +4,7 @@ No model load, no network call, no GPU. Fixtures live under
 testdata/fixtures/documents/ and are keyed by fixture_name (filename stem).
 
 Fixture files are plain JSON serializations of RawOCRResult.  They are
-generated once from the real PaddleOCRAdapter and committed — they must not
+generated once from the real MistralOCRAdapter and committed — they must not
 be regenerated at request time (see DECISIONS.md).
 
 Usage (controlled via DOCUMENT_OCR_PROVIDER=mock in settings):

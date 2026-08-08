@@ -33,4 +33,4 @@ testdata/
 !testdata/mock_responses/
 
 #local pre-trained models
-models
+models/

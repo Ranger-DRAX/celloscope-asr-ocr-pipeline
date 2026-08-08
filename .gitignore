@@ -34,4 +34,7 @@ testdata/
 
 #local pre-trained models
 models/
-pretrained_models/.env
+pretrained_models/
+
+#agent
+agent.md

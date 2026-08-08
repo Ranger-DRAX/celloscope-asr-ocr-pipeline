@@ -1,11 +1,11 @@
-﻿"""Consolidated test suite for POST /api/v1/transcribe.
+"""Consolidated test suite for POST /api/v1/transcribe.
 
 Covers (per agent.md spec, line 156: "validate the test in one file which
 gives the output for one endpoint"):
   - validate_audio: good/bad extensions, size limits
   - resolve_routing_language: full truth-table
   - Two-stage pipeline: Groq mocked via unittest.mock patching only the
-    Groq adapter module (patch target: app.adapters.groq_language_detector.httpx.Client)
+    Groq adapter module (patch target: app.adapters.language_detector.httpx.Client)
   - Fallback behaviour on Groq timeout / error
   - End-to-end API via FastAPI TestClient with mock transcription adapter
   - New response fields: language_detected_by, raw_detected_language
@@ -48,7 +48,7 @@ client = TestClient(app)
 
 # Patch target: httpx.Client *inside* the Groq adapter module only.
 # This avoids accidentally patching the TestClient`s own httpx calls.
-GROQ_HTTPX_CLIENT = "app.adapters.groq_language_detector.httpx.Client"
+GROQ_HTTPX_CLIENT = "app.adapters.language_detector.httpx.Client"
 
 
 def _post(filename: str, content: bytes = b"fake-audio", language: str = "auto", ctype: str = "audio/wav"):

@@ -11,7 +11,7 @@ graph TD
     A[Client\nPOST /api/v1/transcribe\nmultipart: audio + language] --> B[API Layer\nroutes_transcribe.py]
     B --> C{language == auto?}
 
-    C -- YES --> D[GroqLanguageDetectorAdapter\ngroq_language_detector.py\nSends short trimmed sample only]
+    C -- YES --> D[GroqLanguageDetectorAdapter\nlanguage_detector.py\nSends short trimmed sample only]
     D -- detected_language --> E{LanguageDetectionError?}
     E -- No --> F[resolve_routing_language\nlanguage_routing.py]
     E -- Yes / Timeout --> G[Local FasterWhisper\nauto-detect fallback\nlanguage_detected_by = local_fallback]
@@ -40,7 +40,7 @@ api/  →  services/  →  adapters/
 
 - **Dependencies point inward only.**
 - **Services Layer**: Pure business & validation logic — zero FastAPI imports. See [`app/services/README.md`](app/services/README.md).
-- **Adapters Layer**: Interface in `app/adapters/base.py`. `faster_whisper` is strictly isolated within `faster_whisper_adapter.py`. Groq I/O is isolated within `groq_language_detector.py`.
+- **Adapters Layer**: Interface in `app/adapters/base.py`. `faster_whisper` is strictly isolated within `faster_whisper_adapter.py`. Groq I/O is isolated within `language_detector.py`.
 - **Lazy Provider Loading**: Each local Whisper model loads on first use for that language — never both simultaneously (4 GB VRAM budget).
 
 ---

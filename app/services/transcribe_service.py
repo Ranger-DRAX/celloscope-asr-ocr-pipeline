@@ -217,7 +217,7 @@ def run_transcription(
 
         if groq_attempted:
             try:
-                from app.adapters.groq_language_detector import GroqLanguageDetectorAdapter
+                from app.adapters.language_detector import GroqLanguageDetectorAdapter
                 groq = GroqLanguageDetectorAdapter(
                     api_key=settings.groq_api_key,
                     model=settings.groq_model,

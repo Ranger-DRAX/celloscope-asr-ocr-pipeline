@@ -83,6 +83,10 @@ WHISPER_DEVICE=cuda
 WHISPER_COMPUTE_TYPE=default
 MAX_UPLOAD_MB=25
 
+# Document Extraction (Endpoint 2)
+DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr
+MISTRAL_API_KEY=your_mistral_api_key_here
+
 # Groq language detection (Stage 1)
 GROQ_API_KEY=gsk_your_key_here
 GROQ_MODEL=whisper-large-v3-turbo
@@ -143,6 +147,7 @@ Tests cover (37 tests, ~1 s with mock provider):
 
 **Notes:**
 - **Provider (Mistral OCR)**: This endpoint uses the Mistral SDK (`mistralai`) and relies on `mistral-ocr-latest` to parse documents. The endpoint uses the `raw_line` from Mistral markdown table parsing.
+- **Mock Mode Default**: ⚠️ By default, the application runs with `DOCUMENT_EXTRACTION_PROVIDER=mock`. This returns hardcoded sample data (e.g., "Fatema Begum") regardless of the uploaded image to allow local development without hitting the API. **You must set `DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr` and provide a valid `MISTRAL_API_KEY` in your `.env` file to process live files.**
 - **Graceful Degradation**: If the uploaded image does not resemble a lab report (e.g., an invoice or nature photo), the endpoint returns an HTTP 422 error (`not_a_lab_report`).
 - **Data Fidelity (`raw_line`)**: The `raw_line` field is SACRED. It always contains the verbatim text detected by OCR for that row, preserving any abbreviations, unparseable ranges, or typos for human review.
 
@@ -267,37 +272,21 @@ Tests cover (37 tests, ~1 s with mock provider):
 
 All settings can be overridden via environment variables or `.env`:
 
-| Variable                             | Default                                              | Description                                                        |
-|--------------------------------------|------------------------------------------------------|--------------------------------------------------------------------|
-| `TRANSCRIBE_PROVIDER`                | `faster_whisper`                                     | `faster_whisper` (real GPU/CPU model) or `mock`                    |
-| `WHISPER_MODEL`                      | `small`                                              | English model: `tiny`, `base`, `small`, `medium`, `large-v3`      |
-| `WHISPER_MODEL_BN`                   | `None`                                               | Path to Bengali fine-tuned model (CT2 format)                      |
-| `WHISPER_DEVICE`                     | `cuda`                                               | `cuda` (GPU) or `cpu`                                              |
-| `WHISPER_COMPUTE_TYPE`               | `default`                                            | `default` (auto float32/int8 per GPU), `int8`, `float16`          |
-| `MAX_UPLOAD_MB`                      | `25`                                                 | Maximum file size in MB                                            |
-| `GROQ_API_KEY`                       | `None`                                               | Groq Cloud API key — required for Stage 1 detection               |
-| `GROQ_MODEL`                         | `whisper-large-v3-turbo`                             | Groq Whisper model for language detection                          |
-| `ENABLE_REMOTE_LANGUAGE_DETECTION`   | `true`                                               | Set to `false` to always use local auto-detect                     |
-| `LANGUAGE_DETECTION_TIMEOUT_SECONDS` | `8.0`                                                | Hard timeout for Groq call — local fallback triggers on expiry    |
-| `LANGUAGE_DETECTION_SAMPLE_SECONDS`  | `12.0`                                               | Audio sample duration sent to Groq (only this leaves the machine) |
-| `DOCUMENT_EXTRACTION_PROVIDER`       | `mock`                                               | `mock` or `mistral_ocr`.                                          |
-| `MISTRAL_API_KEY`                    | `None`                                               | Required if `DOCUMENT_EXTRACTION_PROVIDER` is `mistral_ocr`       |
-| `LOG_LEVEL`                          | `INFO`                                               | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`         |
+| Variable                             | Default                  | Description                                                       |
+| --------------------------------------| --------------------------| -------------------------------------------------------------------|
+| `TRANSCRIBE_PROVIDER`                | `faster_whisper`         | `faster_whisper` (real GPU/CPU model) or `mock`                   |
+| `WHISPER_MODEL`                      | `small`                  | English model: `tiny`, `base`, `small`, `medium`, `large-v3`      |
+| `WHISPER_MODEL_BN`                   | `None`                   | Path to Bengali fine-tuned model (CT2 format)                     |
+| `WHISPER_DEVICE`                     | `cuda`                   | `cuda` (GPU) or `cpu`                                             |
+| `WHISPER_COMPUTE_TYPE`               | `default`                | `default` (auto float32/int8 per GPU), `int8`, `float16`          |
+| `MAX_UPLOAD_MB`                      | `25`                     | Maximum file size in MB                                           |
+| `GROQ_API_KEY`                       | `None`                   | Groq Cloud API key — required for Stage 1 detection               |
+| `GROQ_MODEL`                         | `whisper-large-v3-turbo` | Groq Whisper model for language detection                         |
+| `ENABLE_REMOTE_LANGUAGE_DETECTION`   | `true`                   | Set to `false` to always use local auto-detect                    |
+| `LANGUAGE_DETECTION_TIMEOUT_SECONDS` | `8.0`                    | Hard timeout for Groq call — local fallback triggers on expiry    |
+| `LANGUAGE_DETECTION_SAMPLE_SECONDS`  | `12.0`                   | Audio sample duration sent to Groq (only this leaves the machine) |
+| `DOCUMENT_EXTRACTION_PROVIDER`       | `mock`                   | `mock` or `mistral_ocr`.                                          |
+| `MISTRAL_API_KEY`                    | `None`                   | Required if `DOCUMENT_EXTRACTION_PROVIDER` is `mistral_ocr`       |
+| `LOG_LEVEL`                          | `INFO`                   | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`         |
 
 ---
-
-## Removing `testdata/` Audio Files from Remote Git
-
-If `testdata/` audio files were committed accidentally to remote Git:
-
-```powershell
-# 1. Untrack testdata from Git without deleting local files
-git rm -r --cached testdata/
-
-# 2. Preserve mock fixture JSONs
-git add testdata/mock_responses/
-
-# 3. Commit and push changes
-git commit -m "refactor(git): untrack testdata audio files"
-git push origin feat/audio
-```

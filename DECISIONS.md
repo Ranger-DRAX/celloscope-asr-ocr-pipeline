@@ -229,3 +229,19 @@ The binary default-to-Bangla rule is intentional, not a limitation. Given curren
 The confidence threshold (0.25) is intentionally generous to avoid false positives on degraded scans.
 
 **Affected code:** `app/services/document_classifier.py`, `app/api/routes_documents.py`.
+
+---
+
+## 13. Defaulting to Mock Provider for Document Extraction
+
+**Status:** Accepted
+
+**Context:** Endpoint 2 requires the `MISTRAL_API_KEY` to function. If a user spins up the server without this key, requests would crash or fail with HTTP 500 when interacting with the API.
+
+**Decision:** By default, `.env.example` configures `DOCUMENT_EXTRACTION_PROVIDER=mock`. This ensures that out-of-the-box, the server (or Docker container) starts cleanly and allows UI/integration testing without making external API calls. 
+
+**Trade-offs & risks:**
+- **Developer Confusion:** A developer might test the endpoint with a real file and see hardcoded results (e.g., "Fatema Begum") and assume the pipeline is broken, not realizing it's in mock mode. This trade-off is mitigated by clear documentation in the `README.md`.
+
+**Affected code:** `app/config.py`, `.env.example`, `app/adapters/ocr/mock_document_adapter.py`.
+

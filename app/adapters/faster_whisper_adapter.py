@@ -46,24 +46,38 @@ class FasterWhisperAdapter:
          use the primary model.
     """
 
-    def __init__(self):
+    def __init__(self, model_override: str | None = None):
+        """Load a single Whisper model.
+
+        Args:
+            model_override: If provided, load this specific model path/name
+                instead of settings.whisper_model. Used by the two-stage
+                pipeline factory (get_transcription_adapter_for_language) to
+                instantiate one adapter per language without loading both
+                models simultaneously (4GB-VRAM budget).
+                Pass None to use the default settings.whisper_model.
+        """
         device = settings.whisper_device
         compute_type = settings.whisper_compute_type
+        model_name = model_override if model_override is not None else settings.whisper_model
         logger.info(
             f"Initializing FasterWhisperAdapter (device={device}, "
-            f"compute_type={compute_type}, model={settings.whisper_model})"
+            f"compute_type={compute_type}, model={model_name})"
         )
 
-        self._model, self._device = self._load_model(settings.whisper_model, device, compute_type)
+        self._model, self._device = self._load_model(model_name, device, compute_type)
+        self._model_name = model_name
 
-        # Optional Bengali-specific model. Only loaded if configured — keeps
-        # the mock/default path untouched and avoids doubling VRAM usage
-        # unless the user has explicitly opted in.
+        # _bn_model is kept for the legacy single-adapter path (model_override=None
+        # and whisper_model_bn is set). In the two-stage pipeline, the service
+        # layer creates two separate adapter instances instead, so this is only
+        # loaded when both conditions are true.
         self._bn_model = None
-        bn_model_path = getattr(settings, "whisper_model_bn", None)
-        if bn_model_path:
-            logger.info(f"Loading dedicated Bengali model from {bn_model_path}")
-            self._bn_model, _ = self._load_model(bn_model_path, device, compute_type)
+        if model_override is None:
+            bn_model_path = getattr(settings, "whisper_model_bn", None)
+            if bn_model_path:
+                logger.info(f"Loading dedicated Bengali model from {bn_model_path}")
+                self._bn_model, _ = self._load_model(bn_model_path, device, compute_type)
         self._bn_prompt = (
             "This audio is spoken Bengali. Transcribe it in Bengali script only, "
             "preserving the spoken words as closely as possible."
@@ -137,7 +151,10 @@ class FasterWhisperAdapter:
 
         has_speech, text = self._resolve_speech(segments)
 
-        model_label = settings.whisper_model_bn if transcript_model is self._bn_model else settings.whisper_model
+        if transcript_model is self._bn_model:
+            model_label = settings.whisper_model_bn
+        else:
+            model_label = self._model_name
         detected_language = detected if detected in ("bn", "en") else None
         return TranscriptionResult(
             transcript=text,

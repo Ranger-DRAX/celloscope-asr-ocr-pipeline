@@ -2,6 +2,7 @@ import logging
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 
 from app.api.schemas_transcribe import TranscribeResponse, ErrorResponse
+from app.api.errors import raise_for_domain_error
 from app.services.transcribe_service import (
     validate_audio,
     run_transcription,
@@ -9,28 +10,15 @@ from app.services.transcribe_service import (
     FileTooLargeError,
 )
 from app.config import settings
-from app.adapters.mock_transcribe_adapter import MockTranscribeAdapter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Singleton adapter instance
+# Legacy singleton for the mock provider path (kept so existing tests that
+# reset `_adapter_instance` still work). The real FasterWhisper adapters are
+# now managed as per-language singletons inside transcribe_service.py.
 _adapter_instance = None
-
-
-def get_adapter():
-    """Return the configured transcription adapter."""
-    global _adapter_instance
-    if _adapter_instance is not None:
-        return _adapter_instance
-
-    if settings.transcribe_provider == "faster_whisper":
-        from app.adapters.faster_whisper_adapter import FasterWhisperAdapter
-        _adapter_instance = FasterWhisperAdapter()
-    else:
-        _adapter_instance = MockTranscribeAdapter(settings.mock_responses_dir)
-    return _adapter_instance
 
 
 @router.post(
@@ -45,6 +33,17 @@ async def transcribe(
     audio: UploadFile = File(...),
     language: str = Form("auto"),
 ):
+    """Transcribe an audio file.
+
+    Two-stage pipeline for ``language="auto"``:
+      1. Language detection via Groq API (short sample, hard timeout).
+         Falls back to local Whisper auto-detect if Groq fails.
+      2. Transcription routed to the correct local model:
+           "en"  -> whisper-small
+           "bn"  -> faster-whisper-bangla-small-int8
+
+    When ``language`` is "bn" or "en", stage 1 is skipped entirely.
+    """
     if language not in ("bn", "en", "auto"):
         raise HTTPException(
             status_code=400,
@@ -61,26 +60,18 @@ async def transcribe(
 
     try:
         validate_audio(audio.filename or "unknown.wav", len(audio_bytes), settings.max_upload_mb)
-    except UnsupportedFormatError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "unsupported_format", "detail": str(e)},
-        )
-    except FileTooLargeError as e:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "file_too_large", "detail": str(e)},
-        )
+    except (UnsupportedFormatError, FileTooLargeError) as e:
+        raise_for_domain_error(e)
 
     try:
-        adapter = get_adapter()
-        result = run_transcription(adapter, audio_bytes, audio.filename or "unknown.wav", language)
-    except Exception as e:
-        logger.error(f"Transcription execution failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail={"error": "transcription_failed", "detail": f"Transcription engine error: {e}"},
+        result = run_transcription(
+            audio_bytes=audio_bytes,
+            filename=audio.filename or "unknown.wav",
+            language=language,
         )
+    except Exception as e:
+        logger.error(f"Transcription pipeline failed: {e}", exc_info=True)
+        raise_for_domain_error(e)
 
     return TranscribeResponse(
         transcript=result.transcript,
@@ -88,4 +79,6 @@ async def transcribe(
         duration_seconds=result.duration_seconds,
         provider=result.provider,
         has_speech=result.has_speech,
+        language_detected_by=result.language_detected_by,
+        raw_detected_language=result.raw_detected_language,
     )

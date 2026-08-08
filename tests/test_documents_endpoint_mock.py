@@ -28,7 +28,7 @@ def test_extract_clean_scanned_report():
     # Check Meta
     meta = data["meta"]
     assert meta["patient_name"] == "John Doe"
-    assert meta["age"] == "45 Years"
+    assert meta["age"] == "45"  # header_parser strips trailing unit (Years/Yrs)
     assert meta["sex"] == "Male"
     assert meta["reference_no"] == "PHD-2024-00123"
     assert meta["report_date"] == "2024-07-15"

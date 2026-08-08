@@ -48,7 +48,7 @@ class ClassificationResult:
 _MIN_NUMERIC_ROWS = 2
 
 # Confidence threshold: below this → not a lab report
-_CONFIDENCE_THRESHOLD = 0.25
+_CONFIDENCE_THRESHOLD = 0.40
 
 # Lab report header label keywords
 _HEADER_LABELS = [
@@ -114,7 +114,13 @@ def classify_document(
         + 0.20 * result_line_ratio
     )
 
-    is_lab_report = confidence >= _CONFIDENCE_THRESHOLD
+    # Hard gate: a document with zero lab header label matches is definitively
+    # not a lab report — no numeric rows can override this. Every real lab report
+    # has at least one of: Patient Name, Age, Sex, Date, Reference No.
+    if header_hits == 0:
+        is_lab_report = False
+    else:
+        is_lab_report = confidence >= _CONFIDENCE_THRESHOLD
 
     if is_lab_report:
         reason = (

@@ -86,3 +86,64 @@ touching the real faster-whisper adapter.
 - Doesn't require GPU hardware for development
 - Allows CI/CD pipelines to run without model downloads
 - Frozen fixture JSONs serve as regression tests
+
+---
+
+## 7. Hybrid Language Detection: Groq API + Local Specialized Transcription, with Default-to-Bangla Routing
+
+**Status:** Accepted
+
+### Context
+
+The original single-stage pipeline used local Whisper auto-detect (`language=None`) to identify the spoken language and then transcribed with the same model. This had two problems:
+
+1. **Model mismatch**: The generic multilingual `whisper-small` checkpoint is notably weaker on Bangla (low-resource in training data) than on English. A Bengali-finetuned model (`faster-whisper-bangla-small-int8`) produces significantly better transcripts for Bangla audio.
+
+2. **VRAM budget**: Loading both models simultaneously (English + Bangla) exceeds a practical 4 GB VRAM budget. A routing step is needed to select the correct model *before* transcription, so only one model is in GPU memory at a time.
+
+The product's audio traffic is overwhelmingly English or Bangla. Fast, accurate language identification from a short audio sample is sufficient to make the routing decision.
+
+### Decision
+
+Implement a **two-stage pipeline**:
+
+**Stage 1 — Language detection via Groq API:**
+- Send only a short trimmed sample (≤12 s, configurable via `LANGUAGE_DETECTION_SAMPLE_SECONDS`) to Groq's hosted Whisper endpoint (`/openai/v1/audio/transcriptions`, `response_format=verbose_json`).
+- Read only the `language` field — discard the transcript. This is detection-only, not transcription.
+- Enforce a hard timeout (`LANGUAGE_DETECTION_TIMEOUT_SECONDS`, default 8 s). Groq being slow or down must never hard-fail a transcription request.
+- On any `LanguageDetectionError` (timeout, network error, HTTP error, malformed response, missing `language` field): log a warning and fall back to local Whisper auto-detect on the primary model.
+
+**Stage 2 — Routing rule + local transcription:**
+- Apply `resolve_routing_language(detected_language)`:
+  - `"en"` → route to English model (`whisper-small`).
+  - **Anything else** → route to the Bengali fine-tuned model (`faster-whisper-bangla-small-int8`).
+- Load the selected model lazily on first use (one model in VRAM at a time).
+- When `language` is specified explicitly by the caller (`"en"` or `"bn"`), Stage 1 is skipped entirely — no Groq call is made.
+
+**Routing rule rationale:**
+The binary default-to-Bangla rule is intentional, not a limitation. Given current traffic patterns (overwhelmingly English or Bangla), routing everything non-English to the Bangla-tuned model is the most practical policy. A per-language model registry would require additional model downloads, VRAM management complexity, and ongoing maintenance for each new language.
+
+### Alternatives Considered
+
+| Alternative | Reason rejected |
+|---|---|
+| **Local-only auto-detect** (status quo) | No per-language model routing; Bengali quality suffers on generic `whisper-small`. |
+| **Racing both local models** | Doubles GPU memory use; wasteful and slow for the common case. |
+| **Full multi-language adapter map** | One specialized model per detected language — operationally complex, each model needs download + VRAM slot. Not justified given current traffic. |
+| **Text-based langid (e.g. langdetect)** | Not applicable to raw audio. Would require a preliminary ASR pass first, defeating the purpose. |
+| **Use Groq for full transcription** | Per-token cost at production scale; audio data leaves the machine; not suitable for a privacy-conscious on-premise deployment. |
+
+### Consequences
+
+**Benefits:**
+- Fast, accurate language ID without loading two local models simultaneously.
+- Full audio stays local — only a short detection sample is sent to a third party.
+- Explicit `language` bypass saves Groq API cost and latency on known-language requests.
+- Graceful degradation: Groq being down degrades to local auto-detect quality (not a failure).
+
+**Trade-offs & risks:**
+- Groq is an external dependency on the critical path. Must maintain a working local fallback at all times.
+- Short audio sample is sent to Groq for detection — accept this privacy trade-off for detection-only (transcript is discarded).
+- Cost/rate-limit exposure proportional to `language="auto"` request volume. Mitigated by short sample + hard timeout.
+- **Non-English, non-Bangla audio (e.g. Hindi, Spanish) will be transcribed by the Bangla-tuned model and produce degraded output rather than an explicit "unsupported language" error.** This is a deliberate, accepted trade-off given current traffic patterns. Revisit if language diversity increases significantly.
+- `LanguageDetectionFatalError` (both Groq and local fallback fail) is possible but extremely unlikely — the local fallback has no external dependencies.

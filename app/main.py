@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Celloscope AI Service",
     description=(
-        "Two-stage speech transcription pipeline: "
-        "Groq language detection → local faster-whisper transcription."
+        "Two-stage ASR pipeline: "
+        "language detection → local faster-whisper transcription."
     ),
-    version="2.0.0",
+    version="1.0.0",
 )
 app.include_router(transcribe_router)
 

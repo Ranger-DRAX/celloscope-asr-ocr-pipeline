@@ -124,7 +124,7 @@ Tests cover (37 tests, ~1 s with mock provider):
 
 ## API Specification
 
-### `POST /api/v1/transcribe`
+### `POST /api/v1/transcribe` (Endpoint 1: ASR)
 
 **Content-Type:** `multipart/form-data`
 
@@ -132,6 +132,58 @@ Tests cover (37 tests, ~1 s with mock provider):
 |------------|------------|----------|----------|---------------------------------------------|
 | `audio`    | UploadFile | Yes      | —        | `.wav`, `.mp3`, `.m4a`, `.flac`, `.ogg`     |
 | `language` | string     | No       | `"auto"` | `"bn"`, `"en"`, or `"auto"` (auto-detect)  |
+
+### `POST /api/v1/documents/extract` (Endpoint 2: Lab Report OCR)
+
+**Content-Type:** `multipart/form-data`
+
+| Form Field | Type       | Required | Default  | Allowed Values / Description               |
+|------------|------------|----------|----------|---------------------------------------------|
+| `file`     | UploadFile | Yes      | —        | `.jpg`, `.jpeg`, `.png`, `.webp`, `.pdf`    |
+
+**Notes:**
+- **PDF Limitation**: Multi-page PDFs are accepted, but only the **first page** is rasterized and processed. This is a known limitation.
+- **Graceful Degradation**: If the uploaded image does not resemble a lab report (e.g., an invoice or nature photo), the endpoint returns an HTTP 422 error (`not_a_lab_report`).
+- **Data Fidelity (`raw_line`)**: The `raw_line` field is SACRED. It always contains the verbatim text detected by OCR for that row, preserving any abbreviations, unparseable ranges, or typos for human review.
+- **Canonical Normalization**:
+  - `value`: Numeric thresholds like `<0.5` are parsed as `0.5`. Qualitative results (Positive, Nil) yield `value: null`. Unparseable ranges (e.g., `0.8 - 1.2`) are rejected from `value` entirely.
+  - `unit`: Extensively normalized (e.g., `gm/dl` → `g/dL`, `10^3/ul` → `10³/µL`).
+  - `report_date`: Converted to ISO-8601 (`YYYY-MM-DD`). Note: `DD/MM/YYYY` is assumed over `MM/DD/YYYY` when ambiguous.
+
+#### Sample Success Response — `POST /api/v1/documents/extract` (HTTP 200)
+
+```json
+{
+  "meta": {
+    "patient_name": "John Doe",
+    "age": "45 Years",
+    "sex": "Male",
+    "report_date": "2024-07-15",
+    "lab_name": "POPULATION HEALTH DIAGNOSTICS",
+    "reference_no": "PHD-2024-00123"
+  },
+  "results": [
+    {
+      "test_name": "Haemoglobin",
+      "value": 13.5,
+      "unit": "g/dL",
+      "reference_range": "13.0 - 17.0",
+      "flag": "",
+      "raw_line": "Haemoglobin 13.5 gm/dl 13.0 - 17.0"
+    },
+    {
+      "test_name": "Blood Glucose (F)",
+      "value": 0.5,
+      "unit": "mmol/L",
+      "reference_range": "3.9 - 6.1",
+      "flag": "L",
+      "raw_line": "Blood Glucose (F) <0.5 mmol/L 3.9 - 6.1 L"
+    }
+  ]
+}
+```
+
+#### Sample Validation Error Response — `POST /api/v1/transcribe` (HTTP 400)
 
 #### Sample Success Response — auto-detect via Groq (HTTP 200)
 

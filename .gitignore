@@ -28,10 +28,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# testdata audio files
+# testdata files (ignore all except explicitly allowed)
 testdata/
 !testdata/mock_responses/
-
+!testdata/fixtures/
 #local pre-trained models
 models/
 pretrained_models/

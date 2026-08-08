@@ -147,3 +147,97 @@ The binary default-to-Bangla rule is intentional, not a limitation. Given curren
 - Cost/rate-limit exposure proportional to `language="auto"` request volume. Mitigated by short sample + hard timeout.
 - **Non-English, non-Bangla audio (e.g. Hindi, Spanish) will be transcribed by the Bangla-tuned model and produce degraded output rather than an explicit "unsupported language" error.** This is a deliberate, accepted trade-off given current traffic patterns. Revisit if language diversity increases significantly.
 - `LanguageDetectionFatalError` (both Groq and local fallback fail) is possible but extremely unlikely — the local fallback has no external dependencies.
+
+---
+
+## 8. Qualitative Lab Results: `value: null` Sentinel (Endpoint 2)
+
+**Status:** Accepted
+
+**Context:** The response schema mandates a `value` field. Some lab tests (Urine Albumin = "Nil", HIV = "Non-Reactive", Pregnancy = "Positive") have no meaningful numeric representation.
+
+**Options considered:**
+- A) Map qualitative strings to numeric sentinels (e.g., Positive → 1, Negative → 0)
+- B) Emit `value: null` for qualitative results
+
+**Decision:** Option B — `value: null`. Mapping qualitative results to arbitrary numerics would fabricate data and could mislead any downstream consumer that does arithmetic. `null` is unambiguous: the test has a result (found in `raw_line`), but it is non-numeric by nature.
+
+**Affected code:** `app/services/document_extraction_service.py` → `_normalize_rows()`, `app/services/normalization.py` → `_QUALITATIVE_SENTINELS`.
+
+---
+
+## 9. Qualified Numerics (`<0.5`, `>200`): Strip Qualifier, Store Threshold (Endpoint 2)
+
+**Status:** Accepted
+
+**Context:** Many lab results appear with inequality qualifiers (`<0.5`, `>200`, `~1.2`). The spec requires a numeric `value` field.
+
+**Options considered:**
+- A) Return `null` for all qualified values (same as qualitative policy)
+- B) Strip the qualifier and store the threshold as the numeric value
+- C) Add a separate `qualifier` field to the schema
+
+**Decision:** Option B. The numeric threshold is a meaningful value (the detection limit of the assay) and is far more useful to a consumer than `null`. The qualifier is fully preserved in `raw_line` — no information is lost. Adding a new schema field (option C) was rejected because it was not specified in the contract and would add complexity for marginal benefit.
+
+**Affected code:** `app/services/normalization.py` → `_QUALIFIER_PATTERN`, `normalize_value()`.
+
+---
+
+## 10. PDF Handling: Rasterize Page 1 via pdf2image (Endpoint 2)
+
+**Status:** Accepted
+
+**Context:** Lab reports are sometimes shared as PDFs. PaddleOCR requires an image, not a PDF.
+
+**Options considered:**
+- A) Reject PDFs with 400 (simplest)
+- B) Rasterize page 1 only via `pdf2image`
+- C) Iterate over all pages and concatenate results
+
+**Decision:** Option B. PDFs are a common real-world format; rejecting them entirely would be a poor user experience. Page 1 is sufficient for the vast majority of single-page lab reports. Multi-page support (option C) would require stitching OCR results across pages and tracking which page each row came from — significantly more complex for a marginal benefit. The page-1-only limitation is documented in README.md.
+
+`pdf2image` is lazily imported inside `maybe_rasterize_pdf()` so that the mock adapter path (which never receives real PDFs) doesn't require Poppler to be installed.
+
+**Affected code:** `app/services/document_extraction_service.py` → `maybe_rasterize_pdf()`.
+
+---
+
+## 11. PaddleOCR CPU vs GPU (Endpoint 2)
+
+**Status:** Accepted
+
+**Context:** The deployment machine has a GTX 1050 Ti with 4 GB VRAM. The Whisper model (Endpoint 1) already occupies most of this budget when loaded.
+
+**Options considered:**
+- A) PaddleOCR on GPU (`paddlepaddle-gpu`)
+- B) PaddleOCR on CPU (`paddlepaddle`)
+
+**Decision:** Option B (CPU). Running PaddleOCR on GPU would:
+1. Contend with faster-whisper for VRAM, risking OOM errors on concurrent requests.
+2. Require the heavier `paddlepaddle-gpu` wheel and matching CUDA version.
+
+CPU inference is slower (~1–3 s for a full page scan) but entirely adequate for single-document requests. The `use_gpu` flag in `PaddleOCRAdapter.__init__()` allows future opt-in without code changes, just a config value.
+
+**Affected code:** `app/adapters/ocr/paddle_ocr_adapter.py` → `PaddleOCRAdapter(use_gpu=False)`.
+
+---
+
+## 12. Non-Lab-Report Policy: HTTP 422 with `not_a_lab_report` (Endpoint 2)
+
+**Status:** Accepted
+
+**Context:** A user may accidentally upload a non-medical document (invoice, photo, blank page). The service must decide how to handle this.
+
+**Options considered:**
+- A) HTTP 200 with empty/null fields (degrade silently)
+- B) HTTP 422 with a structured error containing the classifier reason string
+- C) HTTP 400 (client error)
+
+**Decision:** Option B — HTTP 422. The rationale:
+- Option A (silent) would return confusingly empty results with no signal to the caller. A consumer would not know whether the document was a lab report with no results or a completely wrong input.
+- Option C (400) would imply a malformed request. The request is syntactically valid — it's a legitimate image. The *semantic* issue is the content, which maps more naturally to 422 (Unprocessable Entity).
+- HTTP 422 is semantically correct ("the server understands the request but cannot process it") and carries a structured error body (`error: "not_a_lab_report"`, `detail: <classifier reason>`) that gives the caller enough context to prompt the user to re-upload.
+
+The confidence threshold (0.25) is intentionally generous to avoid false positives on degraded scans.
+
+**Affected code:** `app/services/document_classifier.py`, `app/api/routes_documents.py`.

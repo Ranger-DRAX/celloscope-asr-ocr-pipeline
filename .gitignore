@@ -12,7 +12,7 @@ venv/
 
 # Environment
 .env
-
+.env.example
 # IDE
 .vscode/
 .idea/
@@ -34,3 +34,4 @@ testdata/
 
 #local pre-trained models
 models/
+pretrained_models/.env

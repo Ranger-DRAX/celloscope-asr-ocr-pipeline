@@ -27,6 +27,10 @@ class Settings(BaseSettings):
 
     # ── Mock provider ─────────────────────────────────────────────────────────
     mock_responses_dir: str = "testdata/mock_responses"
+    document_fixtures_dir: str = "testdata/fixtures/documents"
+
+    # ── Document OCR provider ────────────────────────────────────────────────
+    document_ocr_provider: Literal["mock", "paddleocr"] = "paddleocr"
 
     # ── Groq language detection (Stage 1 of the two-stage pipeline) ───────────
     # API key for Groq Cloud. Leave unset or empty to disable remote detection

@@ -1,4 +1,4 @@
-﻿"""Groq-based language detection adapter.
+"""Groq-based language detection adapter.
 
 Implements Stage 1 of the two-stage ASR pipeline: sends a short trimmed
 audio sample to Groq''s hosted Whisper endpoint, reads back the ``language``
@@ -29,6 +29,74 @@ from app.adapters.language_detection_base import LanguageDetectionError
 logger = logging.getLogger(__name__)
 
 GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
+# ── Language name → ISO 639-1 normalization ───────────────────────────────────
+# Groq's verbose_json format returns the full English name of the detected
+# language (e.g. "english", "bengali", "hindi") rather than an ISO 639-1
+# two-letter code ("en", "bn", "hi"). Without normalization, "english" would
+# fail the routing rule's exact "en" check and incorrectly route to the
+# Bangla model.
+#
+# This map covers the languages most likely to appear in Groq responses.
+# Unknown names are passed through as-is — resolve_routing_language() will
+# default-to-Bangla for any unrecognized code, which is the intended policy.
+_LANG_NAME_TO_ISO: dict[str, str] = {
+    # English
+    "english": "en",
+    # Bengali / Bangla
+    "bengali": "bn",
+    "bangla": "bn",
+    # Common South/Southeast Asian languages (routed to Bangla model)
+    "hindi": "hi",
+    "urdu": "ur",
+    "arabic": "ar",
+    "persian": "fa",
+    "farsi": "fa",
+    "punjabi": "pa",
+    "gujarati": "gu",
+    "marathi": "mr",
+    "tamil": "ta",
+    "telugu": "te",
+    "kannada": "kn",
+    "malayalam": "ml",
+    "sinhala": "si",
+    "burmese": "my",
+    "thai": "th",
+    "vietnamese": "vi",
+    "indonesian": "id",
+    "malay": "ms",
+    # European / other
+    "french": "fr",
+    "german": "de",
+    "spanish": "es",
+    "portuguese": "pt",
+    "italian": "it",
+    "dutch": "nl",
+    "russian": "ru",
+    "polish": "pl",
+    "turkish": "tr",
+    "chinese": "zh",
+    "japanese": "ja",
+    "korean": "ko",
+    "swahili": "sw",
+}
+
+
+def _normalize_language_code(raw: str) -> str:
+    """Normalize a Groq language string to an ISO 639-1 code.
+
+    Groq returns full language names in verbose_json mode (e.g. "english",
+    "bengali"). This function maps those names to their ISO 639-1 equivalents.
+    If the input is already an ISO code (2–3 chars) or is unrecognized, it is
+    returned as-is — the routing layer handles unknown codes gracefully.
+
+    Args:
+        raw: Lowercased, stripped string from the Groq ``language`` field.
+
+    Returns:
+        ISO 639-1 code string (e.g. "en", "bn", "hi") or the original string.
+    """
+    return _LANG_NAME_TO_ISO.get(raw, raw)
 
 
 def _trim_audio_bytes(
@@ -188,8 +256,18 @@ class GroqLanguageDetectorAdapter:
                 provider="groq",
             )
 
-        detected = raw_language.strip().lower()
-        logger.info(f"Groq detected language: '{detected}' (model={self._model})")
+        # Normalize: Groq returns full names ("english") in verbose_json mode.
+        # Convert to ISO 639-1 codes ("en") so the routing rule works correctly.
+        raw_stripped = raw_language.strip().lower()
+        detected = _normalize_language_code(raw_stripped)
+
+        if detected != raw_stripped:
+            logger.info(
+                f"Groq language normalized: '{raw_stripped}' -> '{detected}' "
+                f"(model={self._model})"
+            )
+        else:
+            logger.info(f"Groq detected language: '{detected}' (model={self._model})")
 
         return LanguageDetectionResult(
             detected_language=detected,

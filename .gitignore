@@ -31,3 +31,6 @@ Thumbs.db
 # testdata audio files
 testdata/
 !testdata/mock_responses/
+
+#local pre-trained models
+models

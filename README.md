@@ -497,15 +497,20 @@ Tests must assert semantic output, not merely `HTTP 200`.
 
 # Docker / Clean Clone
 
-The assessment requires:
+The project is fully dockerized to ensure clean-clone execution without credential requirements. 
 
+To start the API on port 8000 using Mock Providers (No API keys or model downloads required):
 ```bash
-docker compose up
+docker compose up --build -d
+```
+The API will be available at `http://localhost:8000/docs`.
+
+To stop the application and clean up containers:
+```bash
+docker compose down
 ```
 
-from a clean clone with mock providers, without credentials and without model downloads.
-
-Real providers are activated through `.env`.
+*Note: Real providers (Mistral, Faster-Whisper, Groq) can be activated by providing a `.env` file mapping or explicitly passing variables into the Docker environment.*
 
 Local non-Docker development with Uvicorn remains supported.
 

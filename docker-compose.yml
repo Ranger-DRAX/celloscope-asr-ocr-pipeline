@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  api:
+    build: .
+    container_name: celloscope-asr-ocr-api
+    ports:
+      - "8000:8000"
+    environment:
+      # Explicitly set mock providers to satisfy the clean-clone execution requirement
+      - TRANSCRIBE_PROVIDER=mistral_ocr
+      - DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr
+      - MAX_UPLOAD_MB=25
+
+      # Setting LOG_LEVEL to DEBUG is optional but helpful
+      - LOG_LEVEL=INFO

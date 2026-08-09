@@ -9,14 +9,13 @@ Layer constraints (mirrors transcribe_service.py):
 
 Pipeline:
   1. validate_document()     — extension + size check
-  2. maybe_rasterize_pdf()   — PDF → PNG bytes (lazy pdf2image import)
-  3. get_ocr_adapter()       — returns mock or PaddleOCR adapter
-  4. adapter.extract()       — OCR → RawOCRResult
-  5. classify_document()     — non-lab-report check → raise if not a lab report
-  6. parse_header()          — RawOCRResult → ReportMeta
-  7. parse_table()           — RawOCRResult → list[RawResultRow]
-  8. _normalize_rows()       — RawResultRow → NormalizedResultRow
-  9. Return ExtractionResult
+  2. get_ocr_adapter()       — returns mock or PaddleOCR adapter
+  3. adapter.extract()       — OCR → RawOCRResult
+  4. classify_document()     — non-lab-report check → raise if not a lab report
+  5. parse_header()          — RawOCRResult → ReportMeta
+  6. parse_table()           — RawOCRResult → list[RawResultRow]
+  7. _normalize_rows()       — RawResultRow → NormalizedResultRow
+  8. Return ExtractionResult
 """
 
 from __future__ import annotations
@@ -73,7 +72,7 @@ ALLOWED_EXTENSIONS = ALLOWED_IMAGE_EXTENSIONS + (".pdf",)
 class NormalizedResultRow:
     """One result row after normalization — ready for the API response."""
     test_name: str
-    value: float | None         # numeric value, or None for qualitative results
+    value: float                # numeric value (qualitative results dropped per requirements)
     unit: str
     reference_range: str
     flag: str
@@ -218,8 +217,11 @@ def _normalize_rows(raw_rows: list[RawResultRow]) -> list[NormalizedResultRow]:
 
         # Build the numeric value field:
         # - numeric if parsed and has a number
-        # - None for qualitative (Positive, Nil, etc.) — Decision A
         numeric_value: float | None = val.numeric  # already None for qualitative
+
+        if numeric_value is None:
+            # agent.md #13: "If a row has no confident numeric result: do not include it in results"
+            continue
 
         normalized.append(NormalizedResultRow(
             test_name=row.test_name,

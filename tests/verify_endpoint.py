@@ -1,50 +1,56 @@
-import asyncio
 import os
+import requests
+import json
 
-# Force Mistral provider and make sure API key is read from .env if present
-os.environ["DOCUMENT_EXTRACTION_PROVIDER"] = "mistral_ocr"
-from dotenv import load_dotenv
-load_dotenv()
+API_URL = "http://127.0.0.1:8000/api/v1/documents/extract"
+TEST_DIR = r"K:\Job_Prep\Company test\Celloscope-Assesment\celloscope-asr-ocr-pipeline\testdata\medical_LAB_Reports\Images\Scanned-Images"
 
-from fastapi.testclient import TestClient
-from app.main import app
+def run_tests():
+    print(f"Testing files in {TEST_DIR}")
+    if not os.path.exists(TEST_DIR):
+        print("Directory does not exist!")
+        return
 
-def test_endpoint():
-    print("Initializing test client...")
-    client = TestClient(app)
+    files = [f for f in os.listdir(TEST_DIR) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.pdf'))]
     
-    print("Testing /api/v1/documents/extract with Mistral provider...")
-    
-    test_files = [
-        "testdata/medical_LAB_Reports/PDF/9109 Abn Sample Report 20180503 CBC with Differential Blood.pdf",
-        "testdata/medical_LAB_Reports/PDF/sterling-accuris-pathology-sample-report-unlocked.pdf",
-        "testdata/medical_LAB_Reports/Images/Scanned-Images/1.webp"
-    ]
-    
-    import json
-    for idx, file_path in enumerate(test_files):
-        print(f"\n--- Testing {file_path} ---")
-        if not os.path.exists(file_path):
-            print(f"File not found: {file_path}")
-            continue
+    if not files:
+        print("No valid test files found in the directory.")
+        return
+
+    success_count = 0
+    failure_count = 0
+
+    for filename in files:
+        filepath = os.path.join(TEST_DIR, filename)
+        print(f"\n--- Testing: {filename} ---")
+        try:
+            with open(filepath, 'rb') as f:
+                response = requests.post(
+                    API_URL,
+                    files={'file': (filename, f, 'application/octet-stream')}
+                )
             
-        with open(file_path, "rb") as f:
-            file_bytes = f.read()
+            if response.status_code == 200:
+                data = response.json()
+                results_count = len(data.get("results", []))
+                patient_name = data.get("meta", {}).get("patient_name", "Unknown")
+                print(f"✅ SUCCESS ({response.status_code}): Patient: {patient_name}, Results: {results_count}")
+                success_count += 1
+            elif response.status_code == 422:
+                print(f"⚠️ REJECTED ({response.status_code}): Not a lab report. {response.text}")
+                # We consider 422 a "pass" if it correctly rejected a non-lab report.
+                success_count += 1 
+            else:
+                print(f"❌ FAILED ({response.status_code}): {response.text}")
+                failure_count += 1
+                
+        except Exception as e:
+            print(f"❌ ERROR: Failed to connect or request failed: {e}")
+            failure_count += 1
 
-        filename = os.path.basename(file_path)
-        mime_type = "application/pdf" if filename.lower().endswith(".pdf") else "image/webp"
-        files = {'file': (filename, file_bytes, mime_type)}
-        
-        response = client.post("/api/v1/documents/extract", files=files)
-        print(f"Status Code: {response.status_code}")
-        if response.status_code == 200:
-            output_path = f"testdata/output_sample_{idx}.json"
-            with open(output_path, "w", encoding="utf-8") as out_f:
-                json.dump(response.json(), out_f, indent=2, ensure_ascii=False)
-            print(f"Extraction successful! Output saved to {output_path}")
-        else:
-            print("Error:")
-            print(response.text)
+    print("\n===============================")
+    print(f"Summary: {success_count} Passed, {failure_count} Failed.")
+    print("===============================\n")
 
 if __name__ == "__main__":
-    test_endpoint()
+    run_tests()

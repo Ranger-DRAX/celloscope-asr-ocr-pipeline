@@ -51,11 +51,9 @@ def test_extract_clean_scanned_report():
     assert bg["unit"] == "mmol/L"
     assert "<" in bg["raw_line"]
     
-    # Check Urine Albumin (qualitative)
+    # Urine Albumin (qualitative) is dropped per agent.md #13
     ua = next((r for r in results if r["test_name"] == "Urine Albumin"), None)
-    assert ua is not None
-    assert ua["value"] is None
-    assert "Nil" in ua["raw_line"]
+    assert ua is None
 
 def test_extract_lowgrade_report():
     # Will hit testdata/fixtures/documents/lowgrade_01.json

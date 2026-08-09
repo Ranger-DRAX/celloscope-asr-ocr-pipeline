@@ -33,17 +33,7 @@ async def transcribe(
     audio: UploadFile = File(...),
     language: str = Form("auto"),
 ):
-    """Transcribe an audio file.
-
-    Two-stage pipeline for ``language="auto"``:
-      1. Language detection via Groq API (short sample, hard timeout).
-         Falls back to local Whisper auto-detect if Groq fails.
-      2. Transcription routed to the correct local model:
-           "en"  -> whisper-small
-           "bn"  -> faster-whisper-bangla-small-int8
-
-    When ``language`` is "bn" or "en", stage 1 is skipped entirely.
-    """
+    """Transcribe an audio file."""
     if language not in ("bn", "en", "auto"):
         raise HTTPException(
             status_code=400,

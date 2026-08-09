@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 
 from app.api.routes_transcribe import router as transcribe_router
+from app.api.routes_documents import router as documents_router
 
 # Configure root logger.
 # Level is read from the LOG_LEVEL environment variable (default: INFO).
@@ -19,11 +20,13 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title="Celloscope AI Service",
     description=(
-        "Two-stage ASR pipeline: "
-        "language detection → local faster-whisper transcription."
+        "Endpoints:\n"
+        "- /api/v1/transcribe: Two-stage ASR pipeline\n"
+        "- /api/v1/documents/extract: Lab report extraction"
     ),
-    version="1.0.0",
+    version="2.0.0",
 )
 app.include_router(transcribe_router)
+app.include_router(documents_router)
 
-logger.info("Celloscope AI Service started — POST /api/v1/transcribe is ready")
+logger.info("Celloscope AI Service started — endpoints are ready")

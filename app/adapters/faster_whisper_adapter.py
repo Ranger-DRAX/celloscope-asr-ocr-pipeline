@@ -109,15 +109,34 @@ class FasterWhisperAdapter:
         transcript_model = active_model
 
         try:
-            segments, info = active_model.transcribe(
-                tmp_path,
-                language=language,                  # None => auto-detect
-                task="transcribe",                   # NEVER "translate" — keep spoken language as-is
-                vad_filter=True,                      # trims leading/trailing silence
-                condition_on_previous_text=False,    # stop one bad segment poisoning the rest — key fix for Bengali
-                beam_size=5,                          # beam search recovers better than greedy on weaker languages
-            )
-            segments = list(segments)
+            try:
+                segments, info = active_model.transcribe(
+                    tmp_path,
+                    language=language,                  # None => auto-detect
+                    task="transcribe",                   # NEVER "translate" — keep spoken language as-is
+                    vad_filter=True,                      # trims leading/trailing silence
+                    condition_on_previous_text=False,    # stop one bad segment poisoning the rest — key fix for Bengali
+                    beam_size=5,                          # beam search recovers better than greedy on weaker languages
+                )
+                segments = list(segments)
+            except Exception as exc:
+                err_lower = str(exc).lower()
+                if "cublas" in err_lower or "cuda" in err_lower or "cudnn" in err_lower:
+                    logger.warning(f"CUDA execution failed ({exc}). Falling back to CPU Whisper model.")
+                    self._device = "cpu"
+                    active_model = WhisperModel(self._model_name, device="cpu", compute_type="int8")
+                    self._model = active_model
+                    segments, info = active_model.transcribe(
+                        tmp_path,
+                        language=language,
+                        task="transcribe",
+                        vad_filter=True,
+                        condition_on_previous_text=False,
+                        beam_size=5,
+                    )
+                    segments = list(segments)
+                else:
+                    raise exc
         except Exception as e:
             err_msg = str(e)
             if "Invalid data found" in err_msg or "InvalidDataError" in err_msg or "error decoding" in err_msg.lower():

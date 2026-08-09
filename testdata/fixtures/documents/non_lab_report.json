@@ -1,0 +1,40 @@
+{
+  "lines": [
+    {"text": "ANNUAL PERFORMANCE REVIEW 2024", "confidence": 0.95, "bbox": [50, 20, 550, 50], "order": 0},
+    {"text": "Department: Engineering", "confidence": 0.94, "bbox": [50, 60, 350, 80], "order": 1},
+    {"text": "Employee: Jane Smith", "confidence": 0.93, "bbox": [50, 90, 300, 110], "order": 2},
+    {"text": "Manager: Bob Johnson", "confidence": 0.94, "bbox": [50, 120, 300, 140], "order": 3},
+    {"text": "Period: January - December 2024", "confidence": 0.95, "bbox": [50, 150, 450, 170], "order": 4},
+    {"text": "Overall Rating: Exceeds Expectations", "confidence": 0.93, "bbox": [50, 195, 500, 215], "order": 5},
+    {"text": "Category", "confidence": 0.96, "bbox": [50, 240, 200, 260], "order": 6},
+    {"text": "Score", "confidence": 0.96, "bbox": [210, 240, 300, 260], "order": 7},
+    {"text": "Comments", "confidence": 0.95, "bbox": [310, 240, 500, 260], "order": 8},
+    {"text": "Technical Skills", "confidence": 0.94, "bbox": [50, 270, 200, 290], "order": 9},
+    {"text": "4.5", "confidence": 0.95, "bbox": [210, 270, 300, 290], "order": 10},
+    {"text": "Excellent problem solving", "confidence": 0.93, "bbox": [310, 270, 500, 290], "order": 11},
+    {"text": "Communication", "confidence": 0.94, "bbox": [50, 300, 200, 320], "order": 12},
+    {"text": "3.8", "confidence": 0.95, "bbox": [210, 300, 300, 320], "order": 13},
+    {"text": "Good written skills", "confidence": 0.92, "bbox": [310, 300, 500, 320], "order": 14},
+    {"text": "Teamwork", "confidence": 0.95, "bbox": [50, 330, 200, 350], "order": 15},
+    {"text": "4.2", "confidence": 0.96, "bbox": [210, 330, 300, 350], "order": 16},
+    {"text": "Collaborative approach", "confidence": 0.93, "bbox": [310, 330, 500, 350], "order": 17}
+  ],
+  "table_cells": [
+    {"row_index": 0, "col_index": 0, "text": "Category", "confidence": 0.96, "bbox": [50, 240, 200, 260]},
+    {"row_index": 0, "col_index": 1, "text": "Score", "confidence": 0.96, "bbox": [210, 240, 300, 260]},
+    {"row_index": 0, "col_index": 2, "text": "Comments", "confidence": 0.95, "bbox": [310, 240, 500, 260]},
+    {"row_index": 1, "col_index": 0, "text": "Technical Skills", "confidence": 0.94, "bbox": [50, 270, 200, 290]},
+    {"row_index": 1, "col_index": 1, "text": "4.5", "confidence": 0.95, "bbox": [210, 270, 300, 290]},
+    {"row_index": 1, "col_index": 2, "text": "Excellent problem solving", "confidence": 0.93, "bbox": [310, 270, 500, 290]},
+    {"row_index": 2, "col_index": 0, "text": "Communication", "confidence": 0.94, "bbox": [50, 300, 200, 320]},
+    {"row_index": 2, "col_index": 1, "text": "3.8", "confidence": 0.95, "bbox": [210, 300, 300, 320]},
+    {"row_index": 2, "col_index": 2, "text": "Good written skills", "confidence": 0.92, "bbox": [310, 300, 500, 320]},
+    {"row_index": 3, "col_index": 0, "text": "Teamwork", "confidence": 0.95, "bbox": [50, 330, 200, 350]},
+    {"row_index": 3, "col_index": 1, "text": "4.2", "confidence": 0.96, "bbox": [210, 330, 300, 350]},
+    {"row_index": 3, "col_index": 2, "text": "Collaborative approach", "confidence": 0.93, "bbox": [310, 330, 500, 350]}
+  ],
+  "page_width": 600,
+  "page_height": 400,
+  "provider": "mock",
+  "raw_provider_output": null
+}

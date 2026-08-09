@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env
+.env.*
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+pytest.ini
+
+# IDEs & OS Files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Large Model weights (Optional: uncomment if you don't want them baked into the image)
+# models/
+# pretrained_models/
+
+# Markdown Docs
+agent.md
+Celloscope_AIML_TakeHome-1.pdf

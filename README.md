@@ -1,79 +1,551 @@
 # Speech & Document Extraction — Celloscope AI Service
 
-A production-style speech transcription API built with **FastAPI** and **faster-whisper**, featuring **CUDA GPU acceleration**, Groq-powered language detection, Clean Architecture, and an Adapter pattern.
+FastAPI service for two assessment capabilities:
 
----
+1. **Endpoint 1 — Speech transcription** for Bengali and English audio.
+2. **Endpoint 2 — Medical lab-report extraction** from photographs, scans, and PDFs.
 
-## Architecture — Two-Stage Pipeline
+The architecture uses Clean Architecture, configuration-driven provider adapters, deterministic parsing/normalization, structured errors, and mock-first testing.
 
-```mermaid
-graph TD
-    A["Client<br/>POST /api/v1/transcribe<br/>multipart: audio + language"] --> B["API Layer<br/>routes_transcribe.py"]
-    B --> C{"language == auto?"}
+## Architecture
 
-    C -- YES --> D["GroqLanguageDetectorAdapter<br/>groq_language_detector.py<br/>sends short trimmed sample only"]
-    D -- detected_language --> E{"LanguageDetectionError?"}
-    E -- No --> F["resolve_routing_language<br/>language_routing.py"]
-    E -- "Yes / Timeout" --> G["Local FasterWhisper<br/>auto-detect fallback<br/>language_detected_by = local_fallback"]
-    G --> F
-
-    C -- "NO: explicit bn or en" --> F
-
-    F -- en --> H["FasterWhisperAdapter<br/>model = whisper-small<br/>(en path)"]
-    F -- "bn or any other" --> I["FasterWhisperAdapter<br/>model = faster-whisper-bangla-small-int8<br/>(bn path)"]
-
-    H --> J["JSON Response<br/>transcript, detected_language,<br/>language_detected_by, raw_detected_language,<br/>duration_seconds, provider, has_speech"]
-    I --> J
+```text
+                         Client
+                           |
+             +-------------+-------------+
+             |                           |
+             v                           v
+      POST /api/v1/transcribe     POST /api/v1/documents/extract
+             |                           |
+             v                           v
+         API Layer                   API Layer
+             |                           |
+             v                           v
+         Services                    Services
+             |                           |
+       +-----+-----+             +-------+--------+
+       |           |             |                |
+       v           v             v                v
+    Groq ID    Whisper       Mistral OCR        Mock OCR
+       |           |             |                |
+       +-----+-----+             +-------+--------+
+             |                           |
+             v                           v
+        ASR Response             Raw OCR Evidence
+                                         |
+                                         v
+                                  Lab Report Parser
+                                         |
+                              +----------+----------+
+                              |                     |
+                              v                     v
+                         Metadata Parser        Table Parser
+                                                     |
+                                                     v
+                                              Column Mapping
+                                                     |
+                                                     v
+                                              Row Validation
+                                                     |
+                                                     v
+                                           Normalization
+                                                     |
+                                                     v
+                                               Pydantic
+                                                     |
+                                                     v
+                                                 JSON
 ```
-
-**Why Groq for detection only, not transcription?**
-Groq's hosted Whisper gives fast, accurate language identification from a short sample (≤12 s). Only that sample is sent to Groq — the full audio stays local. Once the language is known, the appropriate fine-tuned local model handles transcription, keeping all audio data on-premise and avoiding per-token Groq costs at transcription scale.
-
-**Default-to-Bangla policy:**
-Any detected language that is not exactly English (`"en"`) routes to the Bangla fine-tuned model. This is a deliberate policy for a product whose non-English traffic is overwhelmingly Bangla. Hindi, Spanish, and other audio will be transcribed by the Bangla model and may produce degraded output — see `DECISIONS.md` ADR #7 for full rationale.
 
 ### Layer separation
 
-```
+```text
 api/  →  services/  →  adapters/
 ```
 
-- **Dependencies point inward only.**
-- **Services Layer**: Pure business & validation logic — zero FastAPI imports. See [`app/services/README.md`](app/services/README.md).
-- **Adapters Layer**: Interface in `app/adapters/base.py`. `faster_whisper` is strictly isolated within `faster_whisper_adapter.py`. Groq I/O is isolated within `groq_language_detector.py`.
-- **Lazy Provider Loading**: Each local Whisper model loads on first use for that language — never both simultaneously (4 GB VRAM budget).
+Rules:
+
+- `api/` owns HTTP routing, multipart handling, schemas, and HTTP errors.
+- `services/` owns orchestration, parsing, validation, and normalization.
+- `adapters/` owns provider/model SDK integration.
+- No provider SDK/model library is imported outside `adapters/`.
+- No FastAPI `UploadFile`, `Request`, or `HTTPException` is used in `services/`.
+- `faster_whisper` is isolated to its adapter.
+- `mistralai` is isolated to the Mistral OCR adapter.
+- Provider selection is configuration-driven.
 
 ---
 
-## Features
+# Endpoint 1 — Speech Transcription
 
-- ⚡ **Two-Stage ASR Pipeline**: Groq language detection → local faster-whisper transcription routed by language.
-- 🌐 **Groq Language Detection**: Fast hosted Whisper language ID from a short audio sample — with hard timeout and local fallback.
-- 🔤 **Binary Routing**: English → `whisper-small`; everything else → `faster-whisper-bangla-small-int8`.
-- 🔄 **Automatic Hardware Fallback**: Seamlessly falls back from CUDA to CPU if GPU is unavailable.
-- 🎭 **Mock Provider**: Zero-dependency offline mock for development and CI testing.
-- 🛡️ **Robust Validation & Error Handling**: Strict file extension, file size (max 25 MB), and audio container validation with structured JSON errors.
-- 🤫 **Silence & Ambient Noise Handling**: Returns HTTP 200 with `has_speech: false` — never hallucinates or raises errors.
-- 📊 **Detection Provenance**: New `language_detected_by` and `raw_detected_language` fields show exactly how the language was determined.
+## API
 
----
-
-## Quick Start (Local Setup)
-
-### 1. Activate Virtual Environment & Install Dependencies
-
-```powershell
-# Activate virtual environment
-.\venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cuda-nvrtc-cu12
+```text
+POST /api/v1/transcribe
+Content-Type: multipart/form-data
 ```
 
-### 2. Configure Environment (`.env`)
+Fields:
 
-Copy `.env.example` to `.env` and fill in your values:
+| Field | Type | Required | Values |
+|---|---|---:|---|
+| `audio` | UploadFile | Yes | `.wav`, `.mp3`, `.m4a`, `.flac`, `.ogg` |
+| `language` | string | No | `bn`, `en`, `auto` |
+
+Maximum upload size: **25 MB**.
+
+### Language routing
+
+For `language=auto`:
+
+```text
+short audio sample
+      ↓
+Groq language detection
+      ↓
+en → whisper-small
+other → Bangla fine-tuned Whisper
+```
+
+Only the short detection sample is sent to Groq. Full transcription remains local. Groq failure/timeout falls back to local language detection.
+
+For explicit `bn` or `en`, remote language detection is skipped.
+
+### No-speech behavior
+
+Silence/ambient noise is a valid transcription outcome and returns HTTP 200:
+
+```json
+{
+  "transcript": "",
+  "detected_language": null,
+  "has_speech": false
+}
+```
+
+Current no-speech classification combines:
+
+```text
+no_speech_prob >= 0.6
+AND
+avg_logprob <= -1.0
+```
+
+These thresholds are tuned against the project's own fixtures, not a universal benchmark.
+
+---
+
+# Endpoint 2 — Medical Lab Report Extraction
+
+## API
+
+```text
+POST /api/v1/documents/extract
+Content-Type: multipart/form-data
+```
+
+Field:
+
+```text
+file=<image or PDF>
+```
+
+Supported formats used by the implementation/test suite include:
+
+```text
+.jpg
+.jpeg
+.png
+.webp
+.pdf
+```
+
+Maximum upload size: **25 MB**.
+
+The endpoint targets English-language medical lab reports, including angled photographs, poor lighting, low-quality scans, cropped pages, and multi-page PDFs.
+
+## Provider architecture
+
+```text
+DocumentExtractionProvider
+        |
+        +-----------------------+
+        |                       |
+        v                       v
+MistralOCRAdapter       MockDocumentAdapter
+        |                       |
+        +-----------+-----------+
+                    |
+                    v
+              Raw OCR Evidence
+                    |
+                    v
+             Lab Report Parser
+                    |
+          +---------+----------+
+          |                    |
+          v                    v
+      Metadata             Table Parser
+      Parser                   |
+                              v
+                       Column Role Mapping
+                              |
+                              v
+                        Row Validation
+                              |
+                              v
+                       Normalization
+                              |
+                              v
+                          Pydantic
+                              |
+                              v
+                             JSON
+```
+
+Mistral OCR is an **evidence provider**, not the final application JSON generator. Parsing and normalization are application-owned and deterministic.
+
+### Provider selection
+
+```env
+DOCUMENT_EXTRACTION_PROVIDER=mock
+```
+
+or:
+
+```env
+DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr
+```
+
+Changing provider must not require source-code changes.
+
+### Mistral OCR
+
+The real adapter is isolated at:
+
+```text
+app/adapters/ocr/mistral_ocr_adapter.py
+```
+
+Configured model:
+
+```text
+mistral-ocr-latest
+```
+
+PDFs are passed directly to Mistral OCR; no PaddleOCR, `pdf2image`, or Poppler dependency is required for Endpoint 2.
+
+### Mock provider
+
+The mock provider:
+
+- makes no network calls
+- loads no OCR model
+- requires no Mistral key
+- replays deterministic OCR fixtures from disk
+- exercises the real parsing/normalization pipeline
+
+---
+
+## Endpoint 2 Response Contract
+
+```json
+{
+  "meta": {
+    "patient_name": "...",
+    "age": "...",
+    "sex": "...",
+    "report_date": "...",
+    "lab_name": "...",
+    "reference_no": "..."
+  },
+  "results": [
+    {
+      "test_name": "Haemoglobin",
+      "value": 15.2,
+      "unit": "g/dL",
+      "reference_range": "13.5 - 19.5",
+      "flag": "",
+      "raw_line": "Haemoglobin 15.2 13.5--19.5 g/dL"
+    }
+  ]
+}
+```
+
+### `raw_line` is evidence
+
+Every emitted result must contain `raw_line` representing the exact OCR text associated with that row.
+
+Never clean, spell-correct, normalize, or silently rewrite `raw_line`.
+
+Structured fields may be normalized independently.
+
+### Numeric value requirement
+
+Every returned `results[]` item must contain a numeric `value`.
+
+Therefore:
+
+- rows without a confident numeric result are excluded;
+- qualitative-only results such as `Positive`, `Negative`, `Reactive`, `Non-Reactive`, or `Nil` are **not** converted to arbitrary numeric sentinels;
+- the service never fabricates a medical value.
+
+This follows the assessment requirement that every result include a numeric value.
+
+---
+
+## Metadata Parsing
+
+Extract:
+
+```text
+patient_name
+age
+sex
+report_date
+lab_name
+reference_no
+```
+
+Use label/context-based parsing rather than fixed line positions.
+
+Missing metadata must not be guessed.
+
+---
+
+## Table Parsing
+
+Different reports may use different column orders, for example:
+
+```text
+Tests | Value | Unit | Reference
+Tests | Value | Reference | Units
+```
+
+Therefore the parser must:
+
+```text
+table detection
+    ↓
+header detection
+    ↓
+semantic column-role mapping
+    ↓
+row extraction
+```
+
+Header synonyms may include `test`, `tests`, `test name`, `investigation`, `result`, `value`, `reference`, `reference range`, `normal range`, `unit`, and `units`.
+
+This prevents the common failure where OCR is correct but `unit` and `reference_range` are swapped.
+
+---
+
+## Result Filtering
+
+Do not turn arbitrary OCR lines into medical results.
+
+Exclude:
+
+- table headers
+- section headers
+- notes
+- interpretation rows
+- doctor/consultant names
+- footer text
+- empty rows
+- rows without a confident numeric result
+
+For example:
+
+```text
+5.7 -- 6.4 : Prediabetes
+6.5 Or higher : Diabetes
+```
+
+are interpretation/reference text, not separate test results.
+
+---
+
+## Normalization Rules
+
+### Values
+
+```text
+12.5       → 12.5
+12         → 12
+12,500     → 12500
+1.2 x 10^3 → 1200
+```
+
+### Qualified values
+
+```text
+<0.5 → 0.5
+>200 → 200
+```
+
+The original qualifier remains in `raw_line`.
+
+### Ambiguous values
+
+If a value such as:
+
+```text
+0.8 - 1.2
+```
+
+cannot confidently be identified as one numeric result, do not guess. Exclude the row from `results[]`.
+
+### Units
+
+```text
+mg/dl   → mg/dL
+gm/dl   → g/dL
+g/dL    → g/dL
+mmol/L  → mmol/L
+10^3/ul → 10³/µL
+```
+
+### Reference ranges
+
+```text
+150--200 → 150 - 200
+150–200  → 150 - 200
+```
+
+### Dates
+
+Canonical form:
+
+```text
+YYYY-MM-DD
+```
+
+Example:
+
+```text
+10 Jun 2025 → 2025-06-10
+```
+
+Ambiguous dates are not guessed.
+
+---
+
+## Non-Lab Documents
+
+A valid image that is semantically not a lab report should not produce garbage results.
+
+Return structured HTTP 422:
+
+```json
+{
+  "error": "not_a_lab_report",
+  "detail": "..."
+}
+```
+
+---
+
+# Test Data & Provenance
+
+### 1. Audio Test Data (Endpoint 1)
+
+* **Bangla Audio Source**: `mozilla-foundation/common_voice_11_0` (bn)
+* **English Audio Source**: `mozilla-foundation/common_voice_17_0` (en)
+* **Location**: `testdata/audio_BN` and `testdata/audio_EN`
+* **Reference Transcripts**: Every audio file in `testdata/audio_BN` and `testdata/audio_EN` is accompanied by a ground-truth `.txt` file containing the exact reference transcript to enable accuracy and Word Error Rate (WER) measurement.
+
+### 2. Medical Lab Reports (Endpoint 2)
+
+* **Location**:
+  ```text
+  testdata/medical_LAB_Reports/Images/Low-Graded-Images
+  testdata/medical_LAB_Reports/Images/Scanned-Images
+  testdata/medical_LAB_Reports/PDF
+  ```
+* **Selection Rationale**:
+  - **Low-Graded Images**: Sourced to test performance under adverse physical conditions (mobile camera photographs, glare, perspective distortion, low lighting, cropped boundaries).
+  - **Scanned Images & PDFs**: Chosen to evaluate different multi-column table layouts (`Test | Value | Unit | Range` vs `Test | Range | Value`), scientific notation parsing (`1.2 x 10^3`), and qualified bounds (`<0.5`).
+
+---
+
+# Testing
+
+Run the complete suite:
+
+```powershell
+pytest -v
+```
+
+Targeted tests should cover:
+
+- provider factories and mock adapters
+- file validation and 25 MB limits
+- metadata parsing
+- table/header detection
+- different column orders
+- result-row filtering
+- numeric value normalization
+- unit normalization
+- reference-range normalization
+- date normalization
+- non-lab classification
+- Endpoint 2 mock integration
+- Endpoint 1 routing/no-speech/fallback behavior
+
+Tests must assert semantic output, not merely `HTTP 200`.
+
+---
+
+# Docker / Clean Clone
+
+The assessment requires:
+
+```bash
+docker compose up
+```
+
+from a clean clone with mock providers, without credentials and without model downloads.
+
+Real providers are activated through `.env`.
+
+Local non-Docker development with Uvicorn remains supported.
+
+---
+
+# Quick Start
+
+```powershell
+.\venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Swagger:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+For real Endpoint 2 extraction:
+
+```env
+DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr
+MISTRAL_API_KEY=your_key
+MISTRAL_OCR_MODEL=mistral-ocr-latest
+```
+
+For clean/mock execution:
+
+```env
+DOCUMENT_EXTRACTION_PROVIDER=mock
+```
+
+Never commit real API keys.
+
+---
+
+# Environment Configuration
 
 ```env
 TRANSCRIBE_PROVIDER=faster_whisper
@@ -81,212 +553,67 @@ WHISPER_MODEL=small
 WHISPER_MODEL_BN=pretrained_models/faster-whisper-bangla-small-int8
 WHISPER_DEVICE=cuda
 WHISPER_COMPUTE_TYPE=default
+
 MAX_UPLOAD_MB=25
 
-# Document Extraction (Endpoint 2)
-DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr
-MISTRAL_API_KEY=your_mistral_api_key_here
+DOCUMENT_EXTRACTION_PROVIDER=mock
+MISTRAL_OCR_MODEL=mistral-ocr-latest
+MISTRAL_API_KEY=
 
-# Groq language detection (Stage 1)
-GROQ_API_KEY=gsk_your_key_here
+GROQ_API_KEY=
 GROQ_MODEL=whisper-large-v3-turbo
 ENABLE_REMOTE_LANGUAGE_DETECTION=true
 LANGUAGE_DETECTION_TIMEOUT_SECONDS=8.0
 LANGUAGE_DETECTION_SAMPLE_SECONDS=12.0
 ```
 
-> ⚠️ **Never commit your real `GROQ_API_KEY`** — `.env` is gitignored.
+---
 
-### 3. Run the API Server
+# Privacy and Logging
 
-```powershell
-uvicorn app.main:app --reload
-```
+Medical reports and audio can contain sensitive information. Do not log:
 
-Server will start at: `http://127.0.0.1:8000`
+- patient names
+- complete OCR responses
+- complete medical results
+- uploaded document contents
+- API keys
+
+Operational logs should contain only necessary metadata such as request ID, provider, file type, file size, processing duration, and result count.
 
 ---
 
-## Testing & API Documentation
+# Known Limitations
 
-### Interactive Swagger UI
-Open **[http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)** to test endpoints interactively.
-
-### Running the Test Suite
-
-```powershell
-pytest tests/test_transcribe_api.py -v
-```
-
-Tests cover (37 tests, ~1 s with mock provider):
-- **Validation**: File extension rules and 25 MB size limits.
-- **Routing**: `resolve_routing_language` full truth-table (en, bn, hi, es, empty, unknown).
-- **Service**: Two-stage pipeline with Groq mocked; fallback on timeout/error.
-- **API Integration**: End-to-end endpoint tests for success, silence, invalid formats, language validation, and new schema fields.
+- Extremely blurred/cropped documents can produce partial extraction.
+- OCR errors cannot always be corrected safely.
+- Non-English lab reports are outside the Endpoint 2 contract.
+- Ambiguous values/dates are intentionally not guessed.
+- Real Mistral mode requires network access and an API key.
+- Non-English/non-Bangla audio follows the accepted default-to-Bangla routing policy.
 
 ---
 
-## API Specification
+# Engineering Principle
 
-### `POST /api/v1/transcribe` (Endpoint 1: ASR)
-
-**Content-Type:** `multipart/form-data`
-
-| Form Field | Type       | Required | Default  | Allowed Values / Description               |
-|------------|------------|----------|----------|---------------------------------------------|
-| `audio`    | UploadFile | Yes      | —        | `.wav`, `.mp3`, `.m4a`, `.flac`, `.ogg`     |
-| `language` | string     | No       | `"auto"` | `"bn"`, `"en"`, or `"auto"` (auto-detect)  |
-
-### `POST /api/v1/documents/extract` (Endpoint 2: Lab Report OCR)
-
-**Content-Type:** `multipart/form-data`
-
-| Form Field | Type       | Required | Default  | Allowed Values / Description               |
-|------------|------------|----------|----------|---------------------------------------------|
-| `file`     | UploadFile | Yes      | —        | `.jpg`, `.jpeg`, `.png`, `.webp`, `.pdf`    |
-
-**Notes:**
-- **Provider (Mistral OCR)**: This endpoint uses the Mistral SDK (`mistralai`) and relies on `mistral-ocr-latest` to parse documents. The endpoint uses the `raw_line` from Mistral markdown table parsing.
-- **Mock Mode Default**: ⚠️ By default, the application runs with `DOCUMENT_EXTRACTION_PROVIDER=mock`. This returns hardcoded sample data (e.g., "Fatema Begum") regardless of the uploaded image to allow local development without hitting the API. **You must set `DOCUMENT_EXTRACTION_PROVIDER=mistral_ocr` and provide a valid `MISTRAL_API_KEY` in your `.env` file to process live files.**
-- **Graceful Degradation**: If the uploaded image does not resemble a lab report (e.g., an invoice or nature photo), the endpoint returns an HTTP 422 error (`not_a_lab_report`).
-- **Data Fidelity (`raw_line`)**: The `raw_line` field is SACRED. It always contains the verbatim text detected by OCR for that row, preserving any abbreviations, unparseable ranges, or typos for human review.
-
-#### Document Extraction Normalization Rules:
-- **Numeric values**: Standalone numbers (e.g., `12.5`, `12,500`) are converted to `float` (`12.5`, `12500.0`).
-- **Scientific notation**: Parsed correctly when possible (e.g., `1.2 x 10^3` to `1200`).
-- **Comparison values**: A value like `<0.5` remains parsed as `0.5`, with qualitative results (Positive, Nil) yielding `value: null`. Unparseable ranges (e.g., `0.8 - 1.2`) are rejected from `value` entirely.
-- **Units**: Extensively normalized (e.g., `gm/dl` → `g/dL`, `10^3/ul` → `10³/µL`).
-- **Reference ranges**: Normalized to a standard format (e.g., `70-110` → `70 - 110`).
-- **Dates**: Converted to ISO-8601 (`YYYY-MM-DD`). Note: `DD/MM/YYYY` is assumed over `MM/DD/YYYY` when ambiguous.
-
-#### Limitations
-- **Severely Degraded Documents**: Documents that are extremely cropped, have unreadable text, or severe blur may yield partial or no results. The endpoint does not hallucinate data.
-- **Ambiguous Dates**: If a date is highly ambiguous (e.g., `03/04/2026`) and context doesn't clarify it, the original string might be preserved or normalization might skip depending on confidence.
-- **Missing Values**: Results without numeric values (or identifiable ranges) might be dropped or logged as partial extraction without `value`.
-
-#### Sample Success Response — `POST /api/v1/documents/extract` (HTTP 200)
-
-```json
-{
-  "meta": {
-    "patient_name": "John Doe",
-    "age": "45 Years",
-    "sex": "Male",
-    "report_date": "2024-07-15",
-    "lab_name": "POPULATION HEALTH DIAGNOSTICS",
-    "reference_no": "PHD-2024-00123"
-  },
-  "results": [
-    {
-      "test_name": "Haemoglobin",
-      "value": 13.5,
-      "unit": "g/dL",
-      "reference_range": "13.0 - 17.0",
-      "flag": "",
-      "raw_line": "Haemoglobin 13.5 gm/dl 13.0 - 17.0"
-    },
-    {
-      "test_name": "Blood Glucose (F)",
-      "value": 0.5,
-      "unit": "mmol/L",
-      "reference_range": "3.9 - 6.1",
-      "flag": "L",
-      "raw_line": "Blood Glucose (F) <0.5 mmol/L 3.9 - 6.1 L"
-    }
-  ]
-}
+```text
+Document
+   ↓
+OCR
+   ↓
+Raw evidence
+   ↓
+Structure detection
+   ↓
+Semantic column mapping
+   ↓
+Conservative validation
+   ↓
+Deterministic normalization
+   ↓
+Pydantic validation
+   ↓
+JSON
 ```
 
-#### Sample Validation Error Response — `POST /api/v1/transcribe` (HTTP 400)
 
-#### Sample Success Response — auto-detect via Groq (HTTP 200)
-
-```json
-{
-    "transcript": "author of The Danger Trail, Philip Steele's, etc.",
-    "detected_language": "en",
-    "duration_seconds": 3.3,
-    "provider": "faster-whisper-small (cuda)",
-    "has_speech": true,
-    "language_detected_by": "groq",
-    "raw_detected_language": "en"
-}
-```
-
-#### Sample Success Response — Groq detected Hindi, routed to Bangla model (HTTP 200)
-
-```json
-{
-    "transcript": "...",
-    "detected_language": "bn",
-    "duration_seconds": 5.1,
-    "provider": "faster-whisper-pretrained_models/faster-whisper-bangla-small-int8 (cuda)",
-    "has_speech": true,
-    "language_detected_by": "groq",
-    "raw_detected_language": "hi"
-}
-```
-
-#### Sample Success Response — explicit language (HTTP 200)
-
-```json
-{
-    "transcript": "আমি বাংলায় কথা বলছি।",
-    "detected_language": "bn",
-    "duration_seconds": 4.2,
-    "provider": "faster-whisper-pretrained_models/faster-whisper-bangla-small-int8 (cuda)",
-    "has_speech": true,
-    "language_detected_by": "user_specified",
-    "raw_detected_language": null
-}
-```
-
-#### Sample Silence / Ambient Noise Response (HTTP 200)
-
-```json
-{
-    "transcript": "",
-    "detected_language": null,
-    "duration_seconds": 5.1,
-    "provider": "faster-whisper-small (cuda)",
-    "has_speech": false,
-    "language_detected_by": "local_fallback",
-    "raw_detected_language": null
-}
-```
-
-#### Sample Validation Error Response (HTTP 400)
-
-```json
-{
-    "detail": {
-        "error": "unsupported_format",
-        "detail": "Unsupported audio format: '.exe'"
-    }
-}
-```
-
----
-
-## Configuration Reference
-
-All settings can be overridden via environment variables or `.env`:
-
-| Variable                             | Default                  | Description                                                       |
-| --------------------------------------| --------------------------| -------------------------------------------------------------------|
-| `TRANSCRIBE_PROVIDER`                | `faster_whisper`         | `faster_whisper` (real GPU/CPU model) or `mock`                   |
-| `WHISPER_MODEL`                      | `small`                  | English model: `tiny`, `base`, `small`, `medium`, `large-v3`      |
-| `WHISPER_MODEL_BN`                   | `None`                   | Path to Bengali fine-tuned model (CT2 format)                     |
-| `WHISPER_DEVICE`                     | `cuda`                   | `cuda` (GPU) or `cpu`                                             |
-| `WHISPER_COMPUTE_TYPE`               | `default`                | `default` (auto float32/int8 per GPU), `int8`, `float16`          |
-| `MAX_UPLOAD_MB`                      | `25`                     | Maximum file size in MB                                           |
-| `GROQ_API_KEY`                       | `None`                   | Groq Cloud API key — required for Stage 1 detection               |
-| `GROQ_MODEL`                         | `whisper-large-v3-turbo` | Groq Whisper model for language detection                         |
-| `ENABLE_REMOTE_LANGUAGE_DETECTION`   | `true`                   | Set to `false` to always use local auto-detect                    |
-| `LANGUAGE_DETECTION_TIMEOUT_SECONDS` | `8.0`                    | Hard timeout for Groq call — local fallback triggers on expiry    |
-| `LANGUAGE_DETECTION_SAMPLE_SECONDS`  | `12.0`                   | Audio sample duration sent to Groq (only this leaves the machine) |
-| `DOCUMENT_EXTRACTION_PROVIDER`       | `mock`                   | `mock` or `mistral_ocr`.                                          |
-| `MISTRAL_API_KEY`                    | `None`                   | Required if `DOCUMENT_EXTRACTION_PROVIDER` is `mistral_ocr`       |
-| `LOG_LEVEL`                          | `INFO`                   | Python logging level: `DEBUG`, `INFO`, `WARNING`, `ERROR`         |
-
----

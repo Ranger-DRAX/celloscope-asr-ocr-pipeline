@@ -12,7 +12,7 @@ class ReportMetaSchema(BaseModel):
 
 class ResultRowSchema(BaseModel):
     test_name: str
-    value: float | None = Field(default=None)
+    value: float
     unit: str
     reference_range: str
     flag: str

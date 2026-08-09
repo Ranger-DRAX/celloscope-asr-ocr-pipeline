@@ -10,7 +10,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def force_mock_provider(monkeypatch):
     """Force mock provider for all tests in this file."""
-    monkeypatch.setattr(settings, "document_ocr_provider", "mock")
+    monkeypatch.setattr(settings, "document_extraction_provider", "mock")
 
 def _post_file(filename: str, content: bytes = b"fake-image", ctype: str = "image/jpeg"):
     return client.post(

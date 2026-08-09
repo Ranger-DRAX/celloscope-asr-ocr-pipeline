@@ -1,7 +1,7 @@
 """OCR adapter contract for Endpoint 2 — Lab Report Extraction.
 
 This module defines the shared data types and Protocol that both the real
-PaddleOCR adapter and the mock adapter must satisfy. Nothing downstream of
+MistralOCR adapter and the mock adapter must satisfy. Nothing downstream of
 the adapter boundary (services, API) may import from a specific adapter
 implementation — they depend on this interface only.
 
@@ -68,7 +68,7 @@ class RawOCRResult:
                         canonical source for test result rows.
         page_width:     Image width in pixels (0 if unknown).
         page_height:    Image height in pixels (0 if unknown).
-        provider:       Adapter label, e.g. "paddleocr-cpu", "mock".
+        provider:       Adapter label, e.g. "mistral_ocr", "mock".
         raw_provider_output: The full, unmodified provider output (for
                         debugging and fixture generation). May be None for the
                         mock adapter.
@@ -87,7 +87,7 @@ class DocumentOCRPort(Protocol):
     """Protocol that all OCR adapters must satisfy.
 
     Implement this Protocol to add a new OCR backend. The real implementation
-    lives in paddle_ocr_adapter.py; the mock in mock_document_adapter.py.
+    lives in mistral_ocr_adapter.py; the mock in mock_document_adapter.py.
     Both must return a RawOCRResult with the same schema.
 
     Raises:

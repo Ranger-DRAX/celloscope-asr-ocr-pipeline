@@ -183,42 +183,30 @@ The binary default-to-Bangla rule is intentional, not a limitation. Given curren
 
 ---
 
-## 10. PDF Handling: Rasterize Page 1 via pdf2image (Endpoint 2)
+## 10. PDF Handling: Native Support via Mistral OCR (Endpoint 2)
 
 **Status:** Accepted
 
-**Context:** Lab reports are sometimes shared as PDFs. PaddleOCR requires an image, not a PDF.
+**Context:** Lab reports are sometimes shared as PDFs. PaddleOCR previously required an image, necessitating `pdf2image`.
 
-**Options considered:**
-- A) Reject PDFs with 400 (simplest)
-- B) Rasterize page 1 only via `pdf2image`
-- C) Iterate over all pages and concatenate results
+**Decision:** With the shift to Mistral OCR, we can pass PDFs directly to the provider. The Mistral API accepts PDFs natively. This removes the need for `pdf2image` and poppler dependencies, simplifying our Docker setup and eliminating rasterization overhead.
 
-**Decision:** Option B. PDFs are a common real-world format; rejecting them entirely would be a poor user experience. Page 1 is sufficient for the vast majority of single-page lab reports. Multi-page support (option C) would require stitching OCR results across pages and tracking which page each row came from — significantly more complex for a marginal benefit. The page-1-only limitation is documented in README.md.
-
-`pdf2image` is lazily imported inside `maybe_rasterize_pdf()` so that the mock adapter path (which never receives real PDFs) doesn't require Poppler to be installed.
-
-**Affected code:** `app/services/document_extraction_service.py` → `maybe_rasterize_pdf()`.
+**Affected code:** `app/services/document_extraction_service.py` (Rasterization logic removed).
 
 ---
 
-## 11. PaddleOCR CPU vs GPU (Endpoint 2)
+## 11. Mistral OCR instead of PaddleOCR (Endpoint 2)
 
 **Status:** Accepted
 
-**Context:** The deployment machine has a GTX 1050 Ti with 4 GB VRAM. The Whisper model (Endpoint 1) already occupies most of this budget when loaded.
+**Context:** The deployment machine has a GTX 1050 Ti with 4 GB VRAM. The Whisper model (Endpoint 1) already occupies most of this budget when loaded. PaddleOCR caused dependency conflicts and environment issues.
 
-**Options considered:**
-- A) PaddleOCR on GPU (`paddlepaddle-gpu`)
-- B) PaddleOCR on CPU (`paddlepaddle`)
+**Decision:** Shift to Mistral OCR via API. This:
+1. Removes heavy local dependencies (`paddlepaddle`, `paddleocr`).
+2. Eliminates VRAM contention with Faster-Whisper.
+3. Provides robust out-of-the-box table extraction (Markdown).
 
-**Decision:** Option B (CPU). Running PaddleOCR on GPU would:
-1. Contend with faster-whisper for VRAM, risking OOM errors on concurrent requests.
-2. Require the heavier `paddlepaddle-gpu` wheel and matching CUDA version.
-
-CPU inference is slower (~1–3 s for a full page scan) but entirely adequate for single-document requests. The `use_gpu` flag in `PaddleOCRAdapter.__init__()` allows future opt-in without code changes, just a config value.
-
-**Affected code:** `app/adapters/ocr/paddle_ocr_adapter.py` → `PaddleOCRAdapter(use_gpu=False)`.
+**Affected code:** `app/adapters/ocr/mistral_ocr_adapter.py`.
 
 ---
 
@@ -241,3 +229,19 @@ CPU inference is slower (~1–3 s for a full page scan) but entirely adequate fo
 The confidence threshold (0.25) is intentionally generous to avoid false positives on degraded scans.
 
 **Affected code:** `app/services/document_classifier.py`, `app/api/routes_documents.py`.
+
+---
+
+## 13. Defaulting to Mock Provider for Document Extraction
+
+**Status:** Accepted
+
+**Context:** Endpoint 2 requires the `MISTRAL_API_KEY` to function. If a user spins up the server without this key, requests would crash or fail with HTTP 500 when interacting with the API.
+
+**Decision:** By default, `.env.example` configures `DOCUMENT_EXTRACTION_PROVIDER=mock`. This ensures that out-of-the-box, the server (or Docker container) starts cleanly and allows UI/integration testing without making external API calls. 
+
+**Trade-offs & risks:**
+- **Developer Confusion:** A developer might test the endpoint with a real file and see hardcoded results (e.g., "Fatema Begum") and assume the pipeline is broken, not realizing it's in mock mode. This trade-off is mitigated by clear documentation in the `README.md`.
+
+**Affected code:** `app/config.py`, `.env.example`, `app/adapters/ocr/mock_document_adapter.py`.
+

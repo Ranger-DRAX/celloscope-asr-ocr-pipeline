@@ -459,9 +459,7 @@ Return structured HTTP 422:
 
 * **Location**:
   ```text
-  testdata/medical_LAB_Reports/Images/Low-Graded-Images
-  testdata/medical_LAB_Reports/Images/Scanned-Images
-  testdata/medical_LAB_Reports/PDF
+
   ```
 * **Selection Rationale**:
   - **Low-Graded Images**: Sourced to test performance under adverse physical conditions (mobile camera photographs, glare, perspective distortion, low lighting, cropped boundaries).
